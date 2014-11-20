@@ -438,8 +438,7 @@ class OrthoMDTransform(GlobalMDTransform):
         set to the points generated from the model using the
         provide weights - the source is either given or set to the
         model's mean.
-    global_transform : :class:`menpo.transform.Aligna
-    bleTransform`
+    global_transform : :class:`menpo.transform.AlignableTransform`
         A class of :class:`menpo.transform.base.AlignableTransform`
         The global transform that should be applied to the model output.
         Doesn't have to have been constructed from the .align() constructor.
