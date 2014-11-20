@@ -256,7 +256,7 @@ class AAMBuilder(DeformableModelBuilder):
             # train shape model and find reference frame
             if verbose:
                 print_dynamic('{}Building shape model'.format(level_str))
-            shape_model = build_shape_model(
+            shape_model = self._build_shape_model(
                 train_shapes, self.max_shape_components[rj])
             reference_frame = self._build_reference_frame(shape_model.mean())
 
@@ -307,6 +307,9 @@ class AAMBuilder(DeformableModelBuilder):
 
         return self._build_aam(shape_models, appearance_models,
                                n_training_images)
+
+    def _build_shape_model(self, shapes, max_components):
+        return build_shape_model(shapes, max_components)
 
     def _build_reference_frame(self, mean_shape):
         r"""
