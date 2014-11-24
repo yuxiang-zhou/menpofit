@@ -52,7 +52,8 @@ class DeformationFieldBuilder(AAMBuilder):
         # TODO: Need to handle inconsistent shapes
         mean_sparse_shape = sparse_shape_model.mean()
         self.n_landmarks = mean_sparse_shape.n_points
-        self.reference_frame = self._build_reference_frame(mean_sparse_shape)
+        self.reference_frame = AAMBuilder._build_reference_frame(
+            self, mean_sparse_shape)
 
         # compute non-linear transforms
         transforms = (
@@ -62,7 +63,7 @@ class DeformationFieldBuilder(AAMBuilder):
         # build dense shapes
         dense_shapes = []
         for (t, s) in zip(transforms, shapes):
-            warped_points = t.apply(self.reference_frame.mask.true_indices)
+            warped_points = t.apply(self.reference_frame.mask.true_indices())
             dense_shape = PointCloud(np.vstack((s.points, warped_points)))
             dense_shapes.append(dense_shape)
 
@@ -87,9 +88,13 @@ class DeformationFieldBuilder(AAMBuilder):
             The reference frame.
         """
 
-        reference_shape = mean_shape[:self.n_landmarks] \
-            if sparsed else mean_shape
+        return self.reference_frame
 
-        return super(DeformationFieldBuilder, self)._build_reference_frame(
-            reference_shape
-        )
+
+def build_reference_frame(mean_shape, n_landmarks, sparsed=True):
+    reference_shape = PointCloud(mean_shape.points[:n_landmarks]) \
+        if sparsed else mean_shape
+
+    from menpofit.aam.base import build_reference_frame as brf
+
+    return brf(reference_shape)
