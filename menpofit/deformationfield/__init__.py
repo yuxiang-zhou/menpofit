@@ -1,3 +1,3 @@
-# from .base import AAM
-# from .builder import AAMBuilder, PatchBasedAAMBuilder
-# from .fitter import LucasKanadeAAMFitter
+from .base import DeformationField
+from .builder import DeformationFieldBuilder as DFBuilder
+from .fitter import LucasKanadeDeformationFieldAAMFitter as DFFitter
