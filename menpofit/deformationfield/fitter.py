@@ -4,7 +4,6 @@ from menpofit.modelinstance import OrthoPDM
 from menpofit.transform import DifferentiableAlignmentSimilarity
 from menpofit.fittingresult import ParametricFittingResult
 from menpo.transform.base import Transform, VInvertible, VComposable
-from menpo.transform import Scale
 from menpo.shape import PointCloud
 
 import numpy as np
@@ -54,19 +53,22 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
 
 class DFFittingResult(ParametricFittingResult):
+
     @property
     def final_shape(self):
-        return self.final_transform.target
+        return PointCloud(self.final_transform.target.points[
+                          :self.fitter.transform.n_landmarks])
 
     @property
     def initial_shape(self):
-        return self.initial_transform.target
+        return PointCloud(self.initial_transform.target.points[
+                          :self.fitter.transform.n_landmarks])
 
 
 class DeformationFieldAICompositional(AlternatingInverseCompositional):
 
     def _create_fitting_result(self, image, parameters, gt_shape=None):
-        return ParametricFittingResult(image, self, parameters=[parameters],
+        return DFFittingResult(image, self, parameters=[parameters],
                                        gt_shape=gt_shape)
 
 
@@ -129,70 +131,6 @@ class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
                                          self.aam.shape_models)):
             transform = md_transform(sm, self.aam.n_landmarks)
             self._fitters.append(algorithm(am, transform, **kwargs))
-
-    def _fit(self, images, initial_shape, gt_shapes=None, max_iters=50,
-             **kwargs):
-        r"""
-        Fits the fitter to the multilevel pyramidal images.
-
-        Parameters
-        -----------
-        images: :class:`menpo.image.masked.MaskedImage` list
-            The images to be fitted.
-        initial_shape: :class:`menpo.shape.PointCloud`
-            The initial shape from which the fitting will start.
-        gt_shapes: :class:`menpo.shape.PointCloud` list, optional
-            The original ground truth shapes associated to the multilevel
-            images.
-
-            Default: None
-        max_iters: int or list, optional
-            The maximum number of iterations.
-            If int, then this will be the overall maximum number of iterations
-            for all the pyramidal levels.
-            If list, then a maximum number of iterations is specified for each
-            pyramidal level.
-
-            Default: 50
-
-        Returns
-        -------
-        fitting_results: :class:`menpo.fit.fittingresult.FittingResult` list
-            The fitting object containing the state of the whole fitting
-            procedure.
-        """
-        shape = initial_shape
-        gt_shape = None
-        n_levels = self.n_levels
-
-        # check max_iters parameter
-        if type(max_iters) is int:
-            max_iters = [np.round(max_iters/n_levels)
-                         for _ in range(n_levels)]
-        elif len(max_iters) == 1 and n_levels > 1:
-            max_iters = [np.round(max_iters[0]/n_levels)
-                         for _ in range(n_levels)]
-        elif len(max_iters) != n_levels:
-            raise ValueError('max_iters can be integer, integer list '
-                             'containing 1 or {} elements or '
-                             'None'.format(self.n_levels))
-
-        # fit images
-        fitting_results = []
-        for j, (i, f, it) in enumerate(zip(images, self._fitters, max_iters)):
-            if gt_shapes is not None:
-                gt_shape = gt_shapes[j]
-
-            parameters = f.get_parameters(shape)
-            fitting_result = f.fit(i, parameters, gt_shape=gt_shape,
-                                   max_iters=it, **kwargs)
-            fitting_results.append(fitting_result)
-
-            shape = PointCloud(
-                fitting_result.final_shape.points[:initial_shape.n_points])
-            Scale(self.downscale, n_dims=shape.n_dims).apply_inplace(shape)
-
-        return fitting_results
 
     @property
     def _str_title(self):
