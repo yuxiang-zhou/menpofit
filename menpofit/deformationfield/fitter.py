@@ -2,8 +2,10 @@ from menpofit.aam.fitter import LucasKanadeAAMFitter
 from menpofit.lucaskanade.appearance import AlternatingInverseCompositional
 from menpofit.modelinstance import OrthoPDM
 from menpofit.transform import DifferentiableAlignmentSimilarity
-from menpofit.fittingresult import ParametricFittingResult
+from menpofit.fittingresult import ParametricFittingResult, compute_error, \
+    MultilevelFittingResult
 from menpo.transform.base import Transform, VInvertible, VComposable
+from menpo.transform import Scale
 from menpo.shape import PointCloud
 
 import numpy as np
@@ -55,14 +57,18 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 class DFFittingResult(ParametricFittingResult):
 
     @property
+    def n_landmarks(self):
+        return self.fitter.transform.n_landmarks
+
+    @property
     def final_shape(self):
         return PointCloud(self.final_transform.target.points[
-                          :self.fitter.transform.n_landmarks])
+                          :self.n_landmarks])
 
     @property
     def initial_shape(self):
         return PointCloud(self.initial_transform.target.points[
-                          :self.fitter.transform.n_landmarks])
+                          :self.n_landmarks])
 
 
 class DeformationFieldAICompositional(AlternatingInverseCompositional):
@@ -70,6 +76,33 @@ class DeformationFieldAICompositional(AlternatingInverseCompositional):
     def _create_fitting_result(self, image, parameters, gt_shape=None):
         return DFFittingResult(image, self, parameters=[parameters],
                                        gt_shape=gt_shape)
+
+
+class DFMultilevelFittingResult(MultilevelFittingResult):
+
+    def errors(self, error_type='me_norm'):
+        r"""
+        Returns a list containing the error at each fitting iteration.
+
+        Parameters
+        -----------
+        error_type : `str` ``{'me_norm', 'me', 'rmse'}``, optional
+            Specifies the way in which the error between the fitted and
+            ground truth shapes is to be computed.
+
+        Returns
+        -------
+        errors : `list` of `float`
+            The errors at each iteration of the fitting process.
+        """
+        if self.gt_shape is not None:
+            return [compute_error(
+                PointCloud(t.points[:self.fitting_results[-1].n_landmarks]),
+                self.gt_shape, error_type)
+                for t in self.shapes]
+        else:
+            raise ValueError('Ground truth has not been set, errors cannot '
+                             'be computed')
 
 
 class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
@@ -131,6 +164,40 @@ class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
                                          self.aam.shape_models)):
             transform = md_transform(sm, self.aam.n_landmarks)
             self._fitters.append(algorithm(am, transform, **kwargs))
+
+    def _create_fitting_result(self, image, fitting_results, affine_correction,
+                               gt_shape=None):
+        r"""
+        Creates the :class: `menpo.aam.fitting.MultipleFitting` object
+        associated with a particular Fitter object.
+
+        Parameters
+        -----------
+        image: :class:`menpo.image.masked.MaskedImage`
+            The original image to be fitted.
+        fitting_results: :class:`menpo.fit.fittingresult.FittingResultList`
+            A list of basic fitting objects containing the state of the
+            different fitting levels.
+        affine_correction: :class: `menpo.transforms.affine.Affine`
+            An affine transform that maps the result of the top resolution
+            fitting level to the space scale of the original image.
+        gt_shape: class:`menpo.shape.PointCloud`, optional
+            The ground truth shape associated to the image.
+
+            Default: None
+        error_type: 'me_norm', 'me' or 'rmse', optional
+            Specifies the way in which the error between the fitted and
+            ground truth shapes is to be computed.
+
+            Default: 'me_norm'
+
+        Returns
+        -------
+        fitting: :class:`menpo.fitmultilevel.fittingresult.MultilevelFittingResult`
+            The fitting object that will hold the state of the fitter.
+        """
+        return DFMultilevelFittingResult(image, self, fitting_results,
+                            affine_correction, gt_shape=gt_shape)
 
     @property
     def _str_title(self):
