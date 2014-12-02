@@ -3,6 +3,7 @@ from menpofit.transform import DifferentiablePiecewiseAffine
 from menpo.feature import igo
 from menpo.shape import PointCloud
 from menpo.transform.groupalign.base import MultipleAlignment
+from menpo.math import principal_component_decomposition as pca
 
 import numpy as np
 
@@ -11,17 +12,27 @@ class ICP(MultipleAlignment):
     def __init__(self, sources, target):
         self.target = target
         self._test_iteration = []
+        self.transformations = []
+
         self.aligned_shapes = [self._align_source(s) for s in sources]
 
         super(ICP, self).__init__(self.aligned_shapes, target)
 
     def _align_source(self, source, eps=1e-3, max_iter=100):
-        pf = p0 = source.points
+
+        transforms = []
+
+        # Initial Alignment using PCA
+        p0, r, sm, tm = self._pca_align(source)
+        transforms.append([r, sm, tm])
+
+        # p0 = source.points
+
+        pf = p0
         n_p = p0.shape[0]
-        tolerance = eps + 1
-        tolerance_old = np.sum(np.power(pf - self.target.points, 2)) / n_p
+        tolerance_old = tolerance = eps + 1
         iter = 0
-        iters = [pf]
+        iters = [source.points, pf]
         while tolerance > eps and iter < max_iter:
             pk = pf
 
@@ -29,13 +40,14 @@ class ICP(MultipleAlignment):
             yk = self._cloest_points(pk)
 
             # Compute Registration
-            qr, qt = self._compute_registration(pk, yk)
+            pf, r, sm, tm = self._compute_registration(pk, yk)
+            transforms.append([r, sm, tm])
 
             # Update source
-            pf = self._update_source(pk, np.hstack((qr, qt)))
+            # pf = self._update_source(pk, np.hstack((qr, qt)))
 
             # Calculate Mean Square Matching Error
-            tolerance_new = np.sum(np.power(pf - self.target.points, 2)) / n_p
+            tolerance_new = np.sum(np.power(pf - yk, 2)) / n_p
             tolerance = abs(tolerance_old - tolerance_new)
             tolerance_old = tolerance_new
 
@@ -43,18 +55,36 @@ class ICP(MultipleAlignment):
             iters.append(pf)
 
         self._test_iteration.append(iters)
+        self.transformations.append(transforms)
 
         return PointCloud(pf)
+
+    def _pca_align(self, source):
+        # Apply PCA on both source and target
+        svecs, svals, smean = pca(source.points)
+        tvecs, tvals, tmean = pca(self.target.points)
+
+        # Compute Rotation
+        svec = svecs[np.argmax(svals)]
+        tvec = tvecs[np.argmax(tvals)]
+
+        sang = np.arctan2(svec[1], svec[0])
+        tang = np.arctan2(tvec[1], tvec[0])
+
+        da = sang - tang
+
+        tr = np.array([[np.cos(da), np.sin(da)],
+                       [-1*np.sin(da), np.cos(da)]])
+
+        # Compute Aligned Point
+        pt = np.array([tr.dot(s - smean) + tmean for s in source.points])
+
+        return pt, tr, smean, tmean
 
     def _update_source(self, p, q):
         return _apply_q(p, q)[:, :p.shape[1]]
 
     def _compute_registration(self, p, x):
-        # The algorithm handles points in 3D
-        if p.shape[1] == 2:
-            p = np.hstack((p, np.zeros((p.shape[0], 1))))
-            x = np.hstack((x, np.zeros((x.shape[0], 1))))
-
         # Calculate Covariance
         up = np.mean(p, axis=0)
         ux = np.mean(x, axis=0)
@@ -63,25 +93,15 @@ class ICP(MultipleAlignment):
         cov = sum([pi[:, None].dot(xi[None, :])
                    for (pi, xi) in zip(p, x)]) / n_p - u
 
-        # Calculate Symmetric Matrix
-        anti_sym = cov - cov.T
-        dt = np.array([anti_sym[1, 2],
-                       anti_sym[2, 0],
-                       anti_sym[0, 1]])
-        cov_tr = np.trace(cov)
-        temp_q = cov + cov.T - cov_tr * np.identity(3)
-        temp_q = np.vstack((dt[None, :], temp_q))
-        q = np.hstack((np.hstack((cov_tr, dt))[:, None], temp_q))
+        # Apply SVD
+        U, W, T = np.linalg.svd(cov)
 
         # Calculate Rotation Matrix
-        eig_values, eig_vectors = np.linalg.eig(q)
-        qr = eig_vectors[np.argmax(eig_values)]
-        r = _compose_r(qr)
+        qr = T.T.dot(U.T)
+        # Calculate Translation Point
+        pk = np.array([qr.dot(s - up) + ux for s in p])
 
-        # Calculate Translation Vector
-        qt = ux[:, None] - r.dot(up[:, None])
-
-        return qr, qt.reshape(3)
+        return pk, qr, up, ux
 
     def _cloest_points(self, source):
         return np.array([self._closest_node(s) for s in source])
