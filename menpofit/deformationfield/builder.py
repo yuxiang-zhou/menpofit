@@ -115,9 +115,9 @@ class ICP(MultipleAlignment):
 def _compose_r(qr):
     q0, q1, q2, q3 = qr
     r = np.zeros((3, 3))
-    r[0, 0] = np.sum(np.power(qr * [1, 1, -1, -1], 2))
-    r[1, 1] = np.sum(np.power(qr[[0, 2, 1, 3]] * [1, 1, -1, -1], 2))
-    r[2, 2] = np.sum(np.power(qr[[0, 3, 1, 2]] * [1, 1, -1, -1], 2))
+    r[0, 0] = np.sum(np.power(qr, 2)) * [1, 1, -1, -1]
+    r[1, 1] = np.sum(np.power(qr[[0, 2, 1, 3]], 2)) * [1, 1, -1, -1]
+    r[2, 2] = np.sum(np.power(qr[[0, 3, 1, 2]], 2)) * [1, 1, -1, -1]
     r[0, 1] = 2 * (q1 * q2 - q0 * q3)
     r[1, 0] = 2 * (q1 * q2 + q0 * q3)
     r[0, 2] = 2 * (q1 * q3 + q0 * q2)
