@@ -9,24 +9,29 @@ import numpy as np
 
 
 class ICP(MultipleAlignment):
-    def __init__(self, sources, target):
-        self.target = target
+    def __init__(self, sources, target=None):
         self._test_iteration = []
         self.transformations = []
+        self.point_correspondence = []
+
+        sources = sources[
+            np.argsort(np.array([s.n_points for s in sources]))
+        ]
+
+        if target is None:
+            target = sources[-1]
+
+        super(ICP, self).__init__(sources, target)
 
         self.aligned_shapes = [self._align_source(s) for s in sources]
 
-        super(ICP, self).__init__(self.aligned_shapes, target)
-
     def _align_source(self, source, eps=1e-3, max_iter=100):
-
+        # TODO： Warp to reference frame
         transforms = []
 
         # Initial Alignment using PCA
         p0, r, sm, tm = self._pca_align(source)
         transforms.append([r, sm, tm])
-
-        # p0 = source.points
 
         pf = p0
         n_p = p0.shape[0]
@@ -37,7 +42,7 @@ class ICP(MultipleAlignment):
             pk = pf
 
             # Compute Closest Points
-            yk = self._cloest_points(pk)
+            yk, _ = self._cloest_points(pk)
 
             # Compute Registration
             pf, r, sm, tm = self._compute_registration(pk, yk)
@@ -54,8 +59,11 @@ class ICP(MultipleAlignment):
             iter += 1
             iters.append(pf)
 
+        _, point_corr = self._cloest_points(self.target, pf)
+
         self._test_iteration.append(iters)
         self.transformations.append(transforms)
+        self.point_correspondence.append(point_corr)
 
         return PointCloud(pf)
 
@@ -103,13 +111,17 @@ class ICP(MultipleAlignment):
 
         return pk, qr, up, ux
 
-    def _cloest_points(self, source):
-        return np.array([self._closest_node(s) for s in source])
+    def _cloest_points(self, source, target=None):
+        points = np.array([self._closest_node(s, target) for s in source])
+        return points[:, 0], points[:, 1]
 
-    def _closest_node(self, node):
-        nodes = np.asarray(self.target.points)
+    def _closest_node(self, node, target=None):
+        if target is None:
+            target = self.target
+        nodes = np.asarray(target.points)
         dist_2 = np.sum((nodes - node) ** 2, axis=1)
-        return self.target.points[np.argmin(dist_2)]
+        index = np.argmin(dist_2)
+        return [target.points[index], index]
 
 
 def _compose_r(qr):
@@ -180,6 +192,8 @@ class DeformationFieldBuilder(AAMBuilder):
     def _build_shape_model(self, shapes, max_components):
         # Currently keeping same amount of landmarks
         # TODO: Need to handle inconsistent shapes
+
+        icp = ICP(shapes, shapes[0])
 
         sparse_shape_model = super(DeformationFieldBuilder, self). \
             _build_shape_model(shapes, max_components)
