@@ -143,6 +143,7 @@ class AAMBuilder(DeformableModelBuilder):
         ``features`` must be a `function` or a list of those
         containing ``1`` or ``n_levels`` elements
     """
+
     def __init__(self, features=igo, transform=DifferentiablePiecewiseAffine,
                  trilist=None, normalization_diagonal=None, n_levels=3,
                  downscale=2, scaled_shape_models=True,
@@ -199,9 +200,9 @@ class AAMBuilder(DeformableModelBuilder):
         """
         # compute reference_shape and normalize images size
         self.reference_shape, normalized_images = \
-            normalization_wrt_reference_shape(images, group, label,
-                                              self.normalization_diagonal,
-                                              verbose=verbose)
+            self._normalization_wrt_reference_shape(images, group, label,
+                                                    self.normalization_diagonal,
+                                                    verbose=verbose)
 
         # create pyramid
         generators = create_pyramid(normalized_images, self.n_levels,
@@ -235,9 +236,9 @@ class AAMBuilder(DeformableModelBuilder):
                 if verbose:
                     print_dynamic(
                         '{}Computing feature space/rescaling - {}'.format(
-                        level_str,
-                        progress_bar_str((c + 1.) / len(generators),
-                                         show_bar=False)))
+                            level_str,
+                            progress_bar_str((c + 1.) / len(generators),
+                                             show_bar=False)))
                 feature_images.append(next(g))
 
             # extract potentially rescaled shapes
@@ -266,9 +267,10 @@ class AAMBuilder(DeformableModelBuilder):
             # compute transforms
             if verbose:
                 print_dynamic('{}Computing transforms'.format(level_str))
-            transforms = [self.transform(reference_frame.landmarks['source'].lms,
-                                         i.landmarks[group][label])
-                          for i in feature_images]
+            transforms = [
+                self.transform(reference_frame.landmarks['source'].lms,
+                               i.landmarks[group][label])
+                for i in feature_images]
 
             # warp images to reference frame
             warped_images = []
@@ -307,6 +309,13 @@ class AAMBuilder(DeformableModelBuilder):
 
         return self._build_aam(shape_models, appearance_models,
                                n_training_images)
+
+    def _normalization_wrt_reference_shape(self, images, group, label,
+                                           normalization_diagonal,
+                                           verbose=False):
+
+        return normalization_wrt_reference_shape(
+            images, group, label, normalization_diagonal, verbose)
 
     def _build_shape_model(self, shapes, max_components):
         return build_shape_model(shapes, max_components)

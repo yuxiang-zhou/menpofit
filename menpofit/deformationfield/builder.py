@@ -1,5 +1,6 @@
 from menpofit.aam import AAMBuilder
 from menpofit.transform import DifferentiablePiecewiseAffine
+from menpofit.builder import normalization_wrt_reference_shape
 from menpo.feature import igo
 from menpo.shape import PointCloud
 from menpo.transform.groupalign.base import MultipleAlignment
@@ -16,11 +17,11 @@ class ICP(MultipleAlignment):
 
         sources = np.array(sources)
         sources = sources[
-            np.argsort(np.array([s.n_points for s in sources]))
+            np.argsort(np.array([s.n_points for s in sources]))[-1::-1]
         ]
 
         if target is None:
-            target = sources[-1]
+            target = sources[0]
 
         super(ICP, self).__init__(sources, target)
 
@@ -142,7 +143,7 @@ class ICP(MultipleAlignment):
     def _cloest_points(self, source, target=None):
         points = np.array([self._closest_node(s, target) for s in source])
 
-        return np.vstack(points[:, 0]), points[:, 1]
+        return np.vstack(points[:, 0]), np.hstack(points[:, 1])
 
     def _closest_node(self, node, target=None):
         if target is None:
@@ -222,12 +223,33 @@ class DeformationFieldBuilder(AAMBuilder):
                                 self.downscale, self.scaled_shape_models,
                                 self.n_landmarks)
 
+    def _normalization_wrt_reference_shape(self, images, group, label,
+                                       normalization_diagonal,
+                                       verbose=False):
+
+        reference_shape, normalized_image = \
+            normalization_wrt_reference_shape(
+                images, group, label, normalization_diagonal, verbose)
+
+        shapes = [i.landmarks[group][label] for i in normalized_image]
+        icp = ICP(shapes)
+
+        icp_shapes = [
+            PointCloud(
+                shapes[i].points[icp.point_correspondence[i]]
+            ) for i in range(
+                icp.n_sources
+            )
+        ]
+
+        shapes = icp_shapes
+
+        for i, s in enumerate(shapes):
+            normalized_image[i].landmarks[group][label].points = s.points
+
+        return reference_shape, normalized_image
+
     def _build_shape_model(self, shapes, max_components):
-        # Currently keeping same amount of landmarks
-        # TODO: Need to handle inconsistent shapes
-
-        icp = ICP(shapes, shapes[0])
-
         sparse_shape_model = super(DeformationFieldBuilder, self). \
             _build_shape_model(shapes, max_components)
 
