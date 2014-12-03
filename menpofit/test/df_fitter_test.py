@@ -75,6 +75,3 @@ for j, (i_r, i_l) in enumerate(zip(test_images_r, test_images_l)):
     # append fitting result to list
     fitting_results_r.append(frr)
     fitting_results_l.append(frl)
-
-    print frr.errors()
-    print frl.errors()
