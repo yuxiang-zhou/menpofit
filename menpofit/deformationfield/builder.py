@@ -14,6 +14,7 @@ class ICP(MultipleAlignment):
         self.transformations = []
         self.point_correspondence = []
 
+        sources = np.array(sources)
         sources = sources[
             np.argsort(np.array([s.n_points for s in sources]))
         ]
@@ -26,46 +27,73 @@ class ICP(MultipleAlignment):
         self.aligned_shapes = [self._align_source(s) for s in sources]
 
     def _align_source(self, source, eps=1e-3, max_iter=100):
-        # TODO： Warp to reference frame
+        # align helper function
+        def _align(i_s):
+            # Align Shapes
+            it = 0
+            pf = i_s
+            n_p = i_s.shape[0]
+            tolerance_old = tolerance = eps + 1
+            while tolerance > eps and it < max_iter:
+                pk = pf
+
+                # Compute Closest Points
+                yk, _ = self._cloest_points(pk)
+
+                # Compute Registration
+                pf, rot, smean, tmean = self._compute_registration(pk, yk)
+                transforms.append([rot, smean, tmean])
+
+                # Update source
+                # pf = self._update_source(pk, np.hstack((qr, qt)))
+
+                # Calculate Mean Square Matching Error
+                tolerance_new = np.sum(np.power(pf - yk, 2)) / n_p
+                tolerance = abs(tolerance_old - tolerance_new)
+                tolerance_old = tolerance_new
+
+                it += 1
+                iters.append(pf)
+
+            return pf
+
         transforms = []
 
         # Initial Alignment using PCA
         p0, r, sm, tm = self._pca_align(source)
         transforms.append([r, sm, tm])
+        iters = [source.points, p0]
 
-        pf = p0
-        n_p = p0.shape[0]
-        tolerance_old = tolerance = eps + 1
-        iter = 0
-        iters = [source.points, pf]
-        while tolerance > eps and iter < max_iter:
-            pk = pf
+        a_p = _align(p0)
 
-            # Compute Closest Points
-            yk, _ = self._cloest_points(pk)
+        # Rescale to reference frame
+        al_source = PointCloud(a_p)
+        t_range = self.target.range()
+        s_range = al_source.range()
 
-            # Compute Registration
-            pf, r, sm, tm = self._compute_registration(pk, yk)
-            transforms.append([r, sm, tm])
+        scale_fector = (t_range - s_range) / s_range + 1
 
-            # Update source
-            # pf = self._update_source(pk, np.hstack((qr, qt)))
+        scaled_shape = (
+            (scale_fector * np.identity(al_source.n_dims)).dot(
+                al_source.points.T
+            ).T
+        )
+        iters.append(scaled_shape)
 
-            # Calculate Mean Square Matching Error
-            tolerance_new = np.sum(np.power(pf - yk, 2)) / n_p
-            tolerance = abs(tolerance_old - tolerance_new)
-            tolerance_old = tolerance_new
+        # Align Scaled Shape
+        a_p = _align(scaled_shape)
 
-            iter += 1
-            iters.append(pf)
-
-        _, point_corr = self._cloest_points(self.target, pf)
+        _, point_corr = self._cloest_points(self.target.points, a_p)
 
         self._test_iteration.append(iters)
         self.transformations.append(transforms)
         self.point_correspondence.append(point_corr)
 
-        return PointCloud(pf)
+        # Scale Aligned Shape Back
+        a_p = (1 / scale_fector * np.identity(source.n_dims)).dot(a_p.T).T
+        iters.append(a_p)
+
+        return PointCloud(a_p)
 
     def _pca_align(self, source):
         # Apply PCA on both source and target
@@ -113,15 +141,20 @@ class ICP(MultipleAlignment):
 
     def _cloest_points(self, source, target=None):
         points = np.array([self._closest_node(s, target) for s in source])
-        return points[:, 0], points[:, 1]
+
+        return np.vstack(points[:, 0]), points[:, 1]
 
     def _closest_node(self, node, target=None):
         if target is None:
             target = self.target
-        nodes = np.asarray(target.points)
+
+        nodes = target
+        if isinstance(target, PointCloud):
+            nodes = np.array(target.points)
+
         dist_2 = np.sum((nodes - node) ** 2, axis=1)
         index = np.argmin(dist_2)
-        return [target.points[index], index]
+        return nodes[index], index
 
 
 def _compose_r(qr):
