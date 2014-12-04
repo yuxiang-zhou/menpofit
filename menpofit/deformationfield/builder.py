@@ -223,13 +223,23 @@ class DeformationFieldBuilder(AAMBuilder):
                                 self.downscale, self.scaled_shape_models,
                                 self.n_landmarks)
 
-    def _normalization_wrt_reference_shape(self, images, group, label,
-                                       normalization_diagonal,
-                                       verbose=False):
+    def build(self, images, group=None, label=None, verbose=False):
+        _, normalized_image = \
+            self._icp_alignment(
+                images, group, label, verbose
+            )
+
+        return super(DeformationFieldBuilder, self).build(
+            normalized_image, 'ICP', label, verbose
+        )
+
+    def _icp_alignment(
+            self, images, group, label, verbose=False):
 
         reference_shape, normalized_image = \
             normalization_wrt_reference_shape(
-                images, group, label, normalization_diagonal, verbose)
+                images, group, label, self.normalization_diagonal, verbose
+            )
 
         shapes = [i.landmarks[group][label] for i in normalized_image]
         icp = ICP(shapes)
@@ -245,7 +255,7 @@ class DeformationFieldBuilder(AAMBuilder):
         shapes = icp_shapes
 
         for i, s in enumerate(shapes):
-            normalized_image[i].landmarks[group][label].points = s.points
+            normalized_image[i].landmarks['ICP'] = s
 
         return reference_shape, normalized_image
 
