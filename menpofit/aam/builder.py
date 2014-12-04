@@ -200,9 +200,9 @@ class AAMBuilder(DeformableModelBuilder):
         """
         # compute reference_shape and normalize images size
         self.reference_shape, normalized_images = \
-            self._normalization_wrt_reference_shape(images, group, label,
-                                                    self.normalization_diagonal,
-                                                    verbose=verbose)
+            normalization_wrt_reference_shape(
+                images, group, label, self.normalization_diagonal, verbose
+            )
 
         # create pyramid
         generators = create_pyramid(normalized_images, self.n_levels,
@@ -309,13 +309,6 @@ class AAMBuilder(DeformableModelBuilder):
 
         return self._build_aam(shape_models, appearance_models,
                                n_training_images)
-
-    def _normalization_wrt_reference_shape(self, images, group, label,
-                                           normalization_diagonal,
-                                           verbose=False):
-
-        return normalization_wrt_reference_shape(
-            images, group, label, normalization_diagonal, verbose)
 
     def _build_shape_model(self, shapes, max_components):
         return build_shape_model(shapes, max_components)
