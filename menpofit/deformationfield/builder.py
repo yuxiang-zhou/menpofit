@@ -202,62 +202,19 @@ class DeformationFieldBuilder(AAMBuilder):
                                 self.downscale, self.scaled_shape_models,
                                 self.n_landmarks)
 
-    def build(self, images, group=None, label=None, verbose=False, icp=True):
-        _, normalized_image = \
-            self._icp_alignment(
-                images, group, label, verbose
-            )
-
-        if icp:
-            return super(DeformationFieldBuilder, self).build(
-                normalized_image, 'ICP', label, verbose
-            )
-        else:
-            return super(DeformationFieldBuilder, self).build(
-                images, group, label, verbose
-            )
-
-    def _icp_alignment(
-            self, images, group, label, verbose=False):
-
-        reference_shape, normalized_image = \
-            normalization_wrt_reference_shape(
-                images, group, label, self.normalization_diagonal, verbose
-            )
-
-        shapes = [i.landmarks[group][label] for i in normalized_image]
-        icp = ICP(shapes)
-
-        icp_shapes = [
-            PointCloud(
-                shapes[i].points[icp.point_correspondence[i]]
-            ) for i in range(
-                icp.n_sources
-            )
-        ]
-
-        shapes = icp_shapes
-
-        for i, s in enumerate(shapes):
-            normalized_image[i].landmarks['ICP'] = s
-
-        return reference_shape, normalized_image
-
     def _build_shape_model(self, shapes, max_components):
-        sparse_shape_model = super(DeformationFieldBuilder, self). \
-            _build_shape_model(shapes, max_components)
+        # TODO: Align Shapes using ICP
 
-        mean_sparse_shape = sparse_shape_model.mean()
-        self.n_landmarks = mean_sparse_shape.n_points
-        self.reference_frame = AAMBuilder._build_reference_frame(
-            self, mean_sparse_shape)
+        # TODO: Build Reference Frame
 
-        # compute non-linear transforms
+        # TODO: Densify Reference Frame
+
+        # TODO: compute non-linear transforms (tps)
         transforms = (
             [self.transform(self.reference_frame.landmarks['source'].lms, s)
              for s in shapes])
 
-        # build dense shapes
+        # TODO: build dense shapes
         dense_shapes = []
         for (t, s) in zip(transforms, shapes):
             warped_points = t.apply(self.reference_frame.mask.true_indices())
@@ -269,23 +226,23 @@ class DeformationFieldBuilder(AAMBuilder):
             _build_shape_model(dense_shapes, max_components)
 
         return dense_shape_model
-
-    def _build_reference_frame(self, mean_shape, sparsed=True):
-        r"""
-        Generates the reference frame given a mean shape.
-
-        Parameters
-        ----------
-        mean_shape : :map:`PointCloud`
-            The mean shape to use.
-
-        Returns
-        -------
-        reference_frame : :map:`MaskedImage`
-            The reference frame.
-        """
-
-        return self.reference_frame
+    #
+    # def _build_reference_frame(self, mean_shape, sparsed=True):
+    #     r"""
+    #     Generates the reference frame given a mean shape.
+    #
+    #     Parameters
+    #     ----------
+    #     mean_shape : :map:`PointCloud`
+    #         The mean shape to use.
+    #
+    #     Returns
+    #     -------
+    #     reference_frame : :map:`MaskedImage`
+    #         The reference frame.
+    #     """
+    #
+    #     return self.reference_frame
 
 
 def build_reference_frame(mean_shape, n_landmarks, sparsed=True):
