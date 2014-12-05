@@ -223,15 +223,20 @@ class DeformationFieldBuilder(AAMBuilder):
                                 self.downscale, self.scaled_shape_models,
                                 self.n_landmarks)
 
-    def build(self, images, group=None, label=None, verbose=False):
+    def build(self, images, group=None, label=None, verbose=False, icp=True):
         _, normalized_image = \
             self._icp_alignment(
                 images, group, label, verbose
             )
 
-        return super(DeformationFieldBuilder, self).build(
-            normalized_image, 'ICP', label, verbose
-        )
+        if icp:
+            return super(DeformationFieldBuilder, self).build(
+                normalized_image, 'ICP', label, verbose
+            )
+        else:
+            return super(DeformationFieldBuilder, self).build(
+                images, group, label, verbose
+            )
 
     def _icp_alignment(
             self, images, group, label, verbose=False):
