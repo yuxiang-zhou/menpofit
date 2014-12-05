@@ -67,32 +67,11 @@ class ICP(MultipleAlignment):
 
         a_p = _align(p0)
 
-        # Rescale to reference frame
-        al_source = PointCloud(a_p)
-        t_range = self.target.range()
-        s_range = al_source.range()
-
-        scale_fector = (t_range - s_range) / s_range + 1
-
-        scaled_shape = (
-            (scale_fector * np.identity(al_source.n_dims)).dot(
-                al_source.points.T
-            ).T
-        )
-        iters.append(scaled_shape)
-
-        # Align Scaled Shape
-        a_p = _align(scaled_shape)
-
         _, point_corr = self._cloest_points(self.target.points, a_p)
 
         self._test_iteration.append(iters)
         self.transformations.append(transforms)
         self.point_correspondence.append(point_corr)
-
-        # Scale Aligned Shape Back
-        a_p = (1 / scale_fector * np.identity(source.n_dims)).dot(a_p.T).T
-        iters.append(a_p)
 
         return PointCloud(a_p)
 
