@@ -1,10 +1,14 @@
 from menpofit.aam import AAMBuilder
+from menpofit.base import create_pyramid
+from menpofit.transform import DifferentiableThinPlateSplines
 from menpofit.transform import DifferentiablePiecewiseAffine
 from menpofit.builder import normalization_wrt_reference_shape
 from menpo.feature import igo
 from menpo.shape import PointCloud
 from menpo.transform.groupalign.base import MultipleAlignment
 from menpo.math import principal_component_decomposition as pca
+from menpo.model import PCAModel
+from menpo.visualize import print_dynamic, progress_bar_str
 
 import numpy as np
 
@@ -15,17 +19,19 @@ class ICP(MultipleAlignment):
         self.transformations = []
         self.point_correspondence = []
 
-        sources = np.array(sources)
-        sources = sources[
-            np.argsort(np.array([s.n_points for s in sources]))[-1::-1]
-        ]
+        # # sort sources
+        # sources = np.array(sources)
+        # sortindex = np.argsort(np.array([s.n_points for s in sources]))[-1::-1]
+        # sources = sources[sortindex]
 
         if target is None:
             target = sources[0]
 
         super(ICP, self).__init__(sources, target)
 
-        self.aligned_shapes = [self._align_source(s) for s in sources]
+        self.aligned_shapes = np.array(
+            [self._align_source(s) for s in sources]
+        )
 
     def _align_source(self, source, eps=1e-3, max_iter=100):
         # align helper function
@@ -61,13 +67,14 @@ class ICP(MultipleAlignment):
         transforms = []
 
         # Initial Alignment using PCA
-        p0, r, sm, tm = self._pca_align(source)
-        transforms.append([r, sm, tm])
+        # p0, r, sm, tm = self._pca_align(source)
+        # transforms.append([r, sm, tm])
+        p0 = source.points
         iters = [source.points, p0]
 
         a_p = _align(p0)
 
-        _, point_corr = self._cloest_points(self.target.points, a_p)
+        _, point_corr = self._cloest_points(a_p)
 
         self._test_iteration.append(iters)
         self.transformations.append(transforms)
@@ -164,7 +171,7 @@ def _apply_q(source, q):
 
 
 class DeformationFieldBuilder(AAMBuilder):
-    def __init__(self, features=igo, transform=DifferentiablePiecewiseAffine,
+    def __init__(self, features=igo, transform=DifferentiableThinPlateSplines,
                  trilist=None, normalization_diagonal=None, n_levels=3,
                  downscale=2, scaled_shape_models=True,
                  max_shape_components=None, max_appearance_components=None,
@@ -173,6 +180,143 @@ class DeformationFieldBuilder(AAMBuilder):
             features, transform, trilist, normalization_diagonal, n_levels,
             downscale, scaled_shape_models, max_shape_components,
             max_appearance_components, boundary)
+
+    def build(self, images, group=None, label=None, verbose=False):
+        r"""
+        Builds a Multilevel Active Appearance Model from a list of
+        landmarked images.
+
+        Parameters
+        ----------
+        images : list of :map:`MaskedImage`
+            The set of landmarked images from which to build the AAM.
+
+        group : `string`, optional
+            The key of the landmark set that should be used. If ``None``,
+            and if there is only one set of landmarks, this set will be used.
+
+        label : `string`, optional
+            The label of of the landmark manager that you wish to use. If no
+            label is passed, the convex hull of all landmarks is used.
+
+        verbose : `boolean`, optional
+            Flag that controls information and progress printing.
+
+        Returns
+        -------
+        aam : :map:`AAM`
+            The AAM object. Shape and appearance models are stored from lowest
+            to highest level
+        """
+        # compute reference_shape and normalize images size
+        self.reference_shape, normalized_images = \
+            normalization_wrt_reference_shape(
+                images, group, label, self.normalization_diagonal, verbose
+            )
+
+        # create pyramid
+        generators = create_pyramid(normalized_images, self.n_levels,
+                                    self.downscale, self.features,
+                                    verbose=verbose)
+
+        # build the model at each pyramid level
+        if verbose:
+            if self.n_levels > 1:
+                print_dynamic('- Building model for each of the {} pyramid '
+                              'levels\n'.format(self.n_levels))
+            else:
+                print_dynamic('- Building model\n')
+
+        shape_models = []
+        appearance_models = []
+
+        # for each pyramid level (high --> low)
+        for j in range(self.n_levels):
+            # since models are built from highest to lowest level, the
+            # parameters in form of list need to use a reversed index
+            rj = self.n_levels - j - 1
+
+            if verbose:
+                level_str = '  - '
+                if self.n_levels > 1:
+                    level_str = '  - Level {}: '.format(j + 1)
+
+            # get feature images of current level
+            feature_images = []
+            for c, g in enumerate(generators):
+                if verbose:
+                    print_dynamic(
+                        '{}Computing feature space/rescaling - {}'.format(
+                            level_str,
+                            progress_bar_str((c + 1.) / len(generators),
+                                             show_bar=False)))
+                feature_images.append(next(g))
+
+            # extract potentially rescaled shapes
+            shapes = [i.landmarks[group][label] for i in feature_images]
+
+            # define shapes that will be used for training
+            if j == 0:
+                original_shapes = shapes
+                train_shapes = shapes
+            else:
+                if self.scaled_shape_models:
+                    train_shapes = shapes
+                else:
+                    train_shapes = original_shapes
+
+            # train shape model and find reference frame
+            if verbose:
+                print_dynamic('{}Building shape model'.format(level_str))
+            shape_model = self._build_shape_model(
+                train_shapes, self.max_shape_components[rj])
+            reference_frame = self._build_reference_frame(shape_model.mean())
+
+            # add shape model to the list
+            shape_models.append(shape_model)
+
+            # compute transforms
+            transforms = self._compute_transforms(reference_frame,
+                                                  feature_images, group,
+                                                  label, verbose, level_str)
+
+            # warp images to reference frame
+            warped_images = []
+            for c, (i, t) in enumerate(zip(feature_images, transforms)):
+                if verbose:
+                    print_dynamic('{}Warping images - {}'.format(
+                        level_str,
+                        progress_bar_str(float(c + 1) / len(feature_images),
+                                         show_bar=False)))
+                warped_images.append(i.warp_to_mask(reference_frame.mask, t))
+
+            # attach reference_frame to images' source shape
+            for i in warped_images:
+                i.landmarks['source'] = reference_frame.landmarks['source']
+
+            # build appearance model
+            if verbose:
+                print_dynamic('{}Building appearance model'.format(level_str))
+            appearance_model = PCAModel(warped_images)
+            # trim appearance model if required
+            if self.max_appearance_components[rj] is not None:
+                appearance_model.trim_components(
+                    self.max_appearance_components[rj])
+
+            # add appearance model to the list
+            appearance_models.append(appearance_model)
+
+            if verbose:
+                print_dynamic('{}Done\n'.format(level_str))
+
+        # reverse the list of shape and appearance models so that they are
+        # ordered from lower to higher resolution
+        shape_models.reverse()
+        appearance_models.reverse()
+        n_training_images = len(images)
+
+        return self._build_aam(shape_models, appearance_models,
+                               n_training_images)
 
     def _build_aam(self, shape_models, appearance_models, n_training_images):
         r"""
@@ -197,28 +341,42 @@ class DeformationFieldBuilder(AAMBuilder):
         from .base import DeformationField
 
         return DeformationField(shape_models, appearance_models,
-                                n_training_images, self.transform,
+                                n_training_images,
+                                DifferentiablePiecewiseAffine,
                                 self.features, self.reference_shape,
-                                self.downscale, self.scaled_shape_models,
-                                self.n_landmarks)
+                                self.downscale, self.scaled_shape_models)
 
     def _build_shape_model(self, shapes, max_components):
-        # TODO: Align Shapes using ICP
+        # Align Shapes Using ICP
+        aligned_shapes = ICP(shapes).aligned_shapes
 
-        # TODO: Build Reference Frame
+        # Build Reference Frame
+        bound_list = []
+        for s in aligned_shapes:
+            bmin, bmax = s.bounds()
+            bound_list.append(bmin)
+            bound_list.append(bmax)
+            bound_list.append(np.array([bmin[0], bmax[1]]))
+            bound_list.append(np.array([bmax[0], bmin[1]]))
+        bound_list = PointCloud(np.array(bound_list))
 
-        # TODO: Densify Reference Frame
+        self.reference_frame = super(
+            DeformationFieldBuilder, self
+        )._build_reference_frame(bound_list)
 
-        # TODO: compute non-linear transforms (tps)
-        transforms = (
-            [self.transform(self.reference_frame.landmarks['source'].lms, s)
-             for s in shapes])
+        # compute non-linear transforms (tps)
+        self.transforms = transforms = (
+            [self.transform(a_s, s)
+             for a_s, s in zip(aligned_shapes, shapes)])
 
-        # TODO: build dense shapes
+        self.reference_frame.landmarks['source'] = \
+            PointCloud(self.reference_frame.mask.true_indices())
+
+        # build dense shapes
         dense_shapes = []
-        for (t, s) in zip(transforms, shapes):
+        for i, (t, s) in enumerate(zip(transforms, shapes)):
             warped_points = t.apply(self.reference_frame.mask.true_indices())
-            dense_shape = PointCloud(np.vstack((s.points, warped_points)))
+            dense_shape = PointCloud(warped_points)
             dense_shapes.append(dense_shape)
 
         # build dense shape model
@@ -226,28 +384,34 @@ class DeformationFieldBuilder(AAMBuilder):
             _build_shape_model(dense_shapes, max_components)
 
         return dense_shape_model
-    #
-    # def _build_reference_frame(self, mean_shape, sparsed=True):
-    #     r"""
-    #     Generates the reference frame given a mean shape.
-    #
-    #     Parameters
-    #     ----------
-    #     mean_shape : :map:`PointCloud`
-    #         The mean shape to use.
-    #
-    #     Returns
-    #     -------
-    #     reference_frame : :map:`MaskedImage`
-    #         The reference frame.
-    #     """
-    #
-    #     return self.reference_frame
+
+    def _compute_transforms(self, reference_frame, feature_images, group,
+                            label, verbose, level_str):
+        if verbose:
+            print_dynamic('{}Computing transforms'.format(level_str))
+
+        return self.transforms
+
+    def _build_reference_frame(self, mean_shape, sparsed=True):
+        r"""
+        Generates the reference frame given a mean shape.
+
+        Parameters
+        ----------
+        mean_shape : :map:`PointCloud`
+            The mean shape to use.
+
+        Returns
+        -------
+        reference_frame : :map:`MaskedImage`
+            The reference frame.
+        """
+
+        return self.reference_frame
 
 
-def build_reference_frame(mean_shape, n_landmarks, sparsed=True):
-    reference_shape = PointCloud(mean_shape.points[:n_landmarks]) \
-        if sparsed else mean_shape
+def build_reference_frame(mean_shape):
+    reference_shape = mean_shape
 
     from menpofit.aam.base import build_reference_frame as brf
 
