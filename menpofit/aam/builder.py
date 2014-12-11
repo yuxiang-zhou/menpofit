@@ -265,12 +265,9 @@ class AAMBuilder(DeformableModelBuilder):
             shape_models.append(shape_model)
 
             # compute transforms
-            if verbose:
-                print_dynamic('{}Computing transforms'.format(level_str))
-            transforms = [
-                self.transform(reference_frame.landmarks['source'].lms,
-                               i.landmarks[group][label])
-                for i in feature_images]
+            transforms = self._compute_transforms(reference_frame,
+                                                  feature_images, group,
+                                                  label, verbose, level_str)
 
             # warp images to reference frame
             warped_images = []
@@ -312,6 +309,18 @@ class AAMBuilder(DeformableModelBuilder):
 
     def _build_shape_model(self, shapes, max_components):
         return build_shape_model(shapes, max_components)
+
+    def _compute_transforms(self, reference_frame, feature_images, group,
+                            label, verbose, level_str):
+        if verbose:
+            print_dynamic('{}Computing transforms'.format(level_str))
+
+        transforms = [
+            self.transform(reference_frame.landmarks['source'].lms,
+                           i.landmarks[group][label])
+            for i in feature_images]
+
+        return transforms
 
     def _build_reference_frame(self, mean_shape):
         r"""

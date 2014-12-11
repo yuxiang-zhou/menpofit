@@ -1,16 +1,16 @@
 from menpofit.aam import AAM
 from menpo.shape import PointCloud
+from menpofit.aam.builder import build_reference_frame
 
 
 class DeformationField(AAM):
 
     def __init__(self, shape_models, appearance_models, n_training_images,
                  transform, features, reference_shape, downscale,
-                 scaled_shape_models, n_landmarks):
+                 scaled_shape_models):
         super(DeformationField, self).__init__(
             shape_models, appearance_models, n_training_images, transform,
             features, reference_shape, downscale, scaled_shape_models)
-        self.n_landmarks = n_landmarks
 
     @property
     def _str_title(self):
@@ -30,16 +30,19 @@ class DeformationField(AAM):
     def _instance(self, level, shape_instance, appearance_instance):
         template = self.appearance_models[level].mean()
         landmarks = template.landmarks['source'].lms
-        spares_shape = PointCloud(shape_instance.points[:self.n_landmarks])
 
-        reference_frame = self._build_reference_frame(spares_shape)
+        reference_frame = self._build_reference_frame(
+            shape_instance)
 
         transform = self.transform(
             reference_frame.landmarks['source'].lms, landmarks)
 
-        return appearance_instance.warp_to_mask(
-            reference_frame.mask, transform, warp_landmarks=True)
+        return appearance_instance.warp_to_mask(reference_frame.mask,
+                                                transform, warp_landmarks=True)
 
-    def _build_reference_frame(self, reference_shape, landmarks=None):
-        from .builder import build_reference_frame as brf
-        return brf(reference_shape, self.n_landmarks)
+        return shape_instance, appearance_instance
+
+    def _build_reference_frame(self, reference_shape):
+
+        return build_reference_frame(
+            reference_shape, trilist=None, boundary=0)

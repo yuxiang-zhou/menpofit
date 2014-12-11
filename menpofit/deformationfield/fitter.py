@@ -5,8 +5,10 @@ from menpofit.transform import DifferentiableAlignmentSimilarity
 from menpofit.fittingresult import ParametricFittingResult, compute_error, \
     MultilevelFittingResult
 from menpo.transform.base import Transform, VInvertible, VComposable
-from menpo.transform import Scale
+from menpo.transform import UniformScale, Translation
 from menpo.shape import PointCloud
+
+from .builder import ICP
 
 import numpy as np
 import scipy
@@ -14,13 +16,30 @@ import scipy
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
-    def __init__(self, model, n_landmarks):
-        super(LinearWarp, self).__init__(model,
+    def __init__(self, models, model_index, n_landmarks=0):
+        super(LinearWarp, self).__init__(models[model_index],
                                          DifferentiableAlignmentSimilarity)
+        self.models = models
+        self.model_index = model_index
         self.n_landmarks = n_landmarks
         self.W = np.vstack((self.similarity_model.components,
                             self.model.components))
-        v = self.W[:, :self.n_dims*self.n_landmarks]
+        # v = self.W[:, :self.n_dims*self.n_landmarks]
+        # self.pinv_v = scipy.linalg.pinv(v)
+
+        sm_mean_l = self.models[self.model_index-1].mean()
+        sm_mean_h = self.model.mean()
+        icp = ICP([sm_mean_l], sm_mean_h)
+        spare_index = spare_index_base = icp.point_correspondence[0]*2
+
+        for i in range(self.n_dims-1):
+            spare_index = np.vstack((spare_index, spare_index_base+i+1))
+
+        spare_index = spare_index.T.reshape(
+            spare_index_base.shape[0]*self.n_dims
+        )
+
+        v = self.W[:, spare_index]
         self.pinv_v = scipy.linalg.pinv(v)
 
     @property
@@ -32,9 +51,11 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
         return PointCloud(self.target.points[:self.n_landmarks])
 
     def set_target(self, target):
-        if target.n_points == self.n_landmarks:
-            # densify target
-            target = np.dot(np.dot(target.as_vector(), self.pinv_v), self.W)
+        if self.model_index == 0:
+            target = Translation(target.centre()).apply(self.model.mean())
+        elif target.n_points < self.target.n_points:
+            # Densify Target
+            target = target.as_vector().dot(self.pinv_v).dot(self.W)
             target = PointCloud(np.reshape(target, (-1, self.n_dims)))
         OrthoPDM.set_target(self, target)
 
@@ -60,15 +81,15 @@ class DFFittingResult(ParametricFittingResult):
     def n_landmarks(self):
         return self.fitter.transform.n_landmarks
 
-    @property
-    def final_shape(self):
-        return PointCloud(self.final_transform.target.points[
-                          :self.n_landmarks])
-
-    @property
-    def initial_shape(self):
-        return PointCloud(self.initial_transform.target.points[
-                          :self.n_landmarks])
+    # @property
+    # def final_shape(self):
+    #     return PointCloud(self.final_transform.target.points[
+    #                       :self.n_landmarks])
+    #
+    # @property
+    # def initial_shape(self):
+    #     return PointCloud(self.initial_transform.target.points[
+    #                       :self.n_landmarks])
 
 
 class DeformationFieldAICompositional(AlternatingInverseCompositional):
@@ -79,30 +100,36 @@ class DeformationFieldAICompositional(AlternatingInverseCompositional):
 
 
 class DFMultilevelFittingResult(MultilevelFittingResult):
+    def final_error(self, error_type='me_norm'):
+        return 100
 
-    def errors(self, error_type='me_norm'):
-        r"""
-        Returns a list containing the error at each fitting iteration.
+    def initial_error(self, error_type='me_norm'):
+        return 100
 
-        Parameters
-        -----------
-        error_type : `str` ``{'me_norm', 'me', 'rmse'}``, optional
-            Specifies the way in which the error between the fitted and
-            ground truth shapes is to be computed.
-
-        Returns
-        -------
-        errors : `list` of `float`
-            The errors at each iteration of the fitting process.
-        """
-        if self.gt_shape is not None:
-            return [compute_error(
-                PointCloud(t.points[:self.fitting_results[-1].n_landmarks]),
-                self.gt_shape, error_type)
-                for t in self.shapes]
-        else:
-            raise ValueError('Ground truth has not been set, errors cannot '
-                             'be computed')
+    pass
+    # def errors(self, error_type='me_norm'):
+    #     r"""
+    #     Returns a list containing the error at each fitting iteration.
+    #
+    #     Parameters
+    #     -----------
+    #     error_type : `str` ``{'me_norm', 'me', 'rmse'}``, optional
+    #         Specifies the way in which the error between the fitted and
+    #         ground truth shapes is to be computed.
+    #
+    #     Returns
+    #     -------
+    #     errors : `list` of `float`
+    #         The errors at each iteration of the fitting process.
+    #     """
+    #     if self.gt_shape is not None:
+    #         return [compute_error(
+    #             PointCloud(t.points[:self.fitting_results[-1].n_landmarks]),
+    #             self.gt_shape, error_type)
+    #             for t in self.shapes]
+    #     else:
+    #         raise ValueError('Ground truth has not been set, errors cannot '
+    #                          'be computed')
 
 
 class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
@@ -162,7 +189,7 @@ class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
         self._fitters = []
         for j, (am, sm) in enumerate(zip(self.aam.appearance_models,
                                          self.aam.shape_models)):
-            transform = md_transform(sm, self.aam.n_landmarks)
+            transform = md_transform(self.aam.shape_models, j)
             self._fitters.append(algorithm(am, transform, **kwargs))
 
     def _create_fitting_result(self, image, fitting_results, affine_correction,
