@@ -36,7 +36,14 @@ class DeformationField(AAM):
         reference_frame = self._build_reference_frame(
             shape_instance)
 
-        sparse_index = np.arange(0, landmarks.n_points, np.power(4, level))
+        sparse_rate = 8
+        w, h = template.shape
+        sparse_index = []
+        for i in range(w / sparse_rate):
+            for j in range(h / sparse_rate):
+                index = i*sparse_rate*h+j*sparse_rate
+                if index < landmarks.n_points:
+                    sparse_index.append(index)
 
         source = PointCloud(
             reference_frame.landmarks['source'].lms.points[sparse_index]
