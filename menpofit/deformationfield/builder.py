@@ -173,7 +173,7 @@ def _apply_q(source, q):
 class DeformationFieldBuilder(AAMBuilder):
     def __init__(self, features=igo, transform=DifferentiableThinPlateSplines,
                  trilist=None, normalization_diagonal=None, n_levels=3,
-                 downscale=2, scaled_shape_models=True,
+                 downscale=2, scaled_shape_models=False,
                  max_shape_components=None, max_appearance_components=None,
                  boundary=3):
         super(DeformationFieldBuilder, self).__init__(
@@ -288,7 +288,8 @@ class DeformationFieldBuilder(AAMBuilder):
                         level_str,
                         progress_bar_str(float(c + 1) / len(feature_images),
                                          show_bar=False)))
-                warped_images.append(i.warp_to_mask(reference_frame.mask, t))
+                si = i.rescale(np.power(self.downscale, j))
+                warped_images.append(si.warp_to_mask(reference_frame.mask, t))
 
             # attach reference_frame to images' source shape
             for i in warped_images:

@@ -16,31 +16,29 @@ import scipy
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
-    def __init__(self, models, model_index, n_landmarks=0):
-        super(LinearWarp, self).__init__(models[model_index],
+    def __init__(self, model, n_landmarks=0):
+        super(LinearWarp, self).__init__(model,
                                          DifferentiableAlignmentSimilarity)
-        self.models = models
-        self.model_index = model_index
         self.n_landmarks = n_landmarks
         self.W = np.vstack((self.similarity_model.components,
                             self.model.components))
         # v = self.W[:, :self.n_dims*self.n_landmarks]
         # self.pinv_v = scipy.linalg.pinv(v)
 
-        sm_mean_l = self.models[self.model_index-1].mean()
-        sm_mean_h = self.model.mean()
-        icp = ICP([sm_mean_l], sm_mean_h)
-        spare_index = spare_index_base = icp.point_correspondence[0]*2
-
-        for i in range(self.n_dims-1):
-            spare_index = np.vstack((spare_index, spare_index_base+i+1))
-
-        spare_index = spare_index.T.reshape(
-            spare_index_base.shape[0]*self.n_dims
-        )
-
-        v = self.W[:, spare_index]
-        self.pinv_v = scipy.linalg.pinv(v)
+        # sm_mean_l = self.models[self.model_index-1].mean()
+        # sm_mean_h = self.model.mean()
+        # icp = ICP([sm_mean_l], sm_mean_h)
+        # spare_index = spare_index_base = icp.point_correspondence[0]*2
+        #
+        # for i in range(self.n_dims-1):
+        #     spare_index = np.vstack((spare_index, spare_index_base+i+1))
+        #
+        # spare_index = spare_index.T.reshape(
+        #     spare_index_base.shape[0]*self.n_dims
+        # )
+        #
+        # v = self.W[:, spare_index]
+        # self.pinv_v = scipy.linalg.pinv(v)
 
     @property
     def dense_target(self):
@@ -51,12 +49,26 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
         return PointCloud(self.target.points[:self.n_landmarks])
 
     def set_target(self, target):
-        if self.model_index == 0:
-            target = Translation(target.centre()).apply(self.model.mean())
-        elif target.n_points < self.target.n_points:
-            # Densify Target
-            target = target.as_vector().dot(self.pinv_v).dot(self.W)
-            target = PointCloud(np.reshape(target, (-1, self.n_dims)))
+        if target.n_points < self.target.n_points:
+            tmin, tmax = target.bounds()
+            smin, smax = self.target.bounds()
+            ss = PointCloud(np.array(
+                [[smin[0], smin[1]],
+                [smin[0], smax[1]],
+                [smax[0], smin[1]],
+                [smax[0], smax[1]]]
+            ))
+
+            tt = PointCloud(np.array(
+                [[tmin[0], tmin[1]],
+                [tmin[0], tmax[1]],
+                [tmax[0], tmin[1]],
+                [tmax[0], tmax[1]]])
+            )
+            t = DifferentiableAlignmentSimilarity(ss, tt)
+
+            target = t.apply(self.target)
+
         OrthoPDM.set_target(self, target)
 
     def _apply(self, _, **kwargs):
@@ -189,7 +201,7 @@ class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
         self._fitters = []
         for j, (am, sm) in enumerate(zip(self.aam.appearance_models,
                                          self.aam.shape_models)):
-            transform = md_transform(self.aam.shape_models, j)
+            transform = md_transform(sm)
             self._fitters.append(algorithm(am, transform, **kwargs))
 
     def _create_fitting_result(self, image, fitting_results, affine_correction,
