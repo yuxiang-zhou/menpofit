@@ -343,7 +343,7 @@ class DeformationFieldBuilder(AAMBuilder):
 
         return DeformationField(shape_models, appearance_models,
                                 n_training_images,
-                                DifferentiablePiecewiseAffine,
+                                DifferentiableThinPlateSplines,
                                 self.features, self.reference_shape,
                                 self.downscale, self.scaled_shape_models)
 
