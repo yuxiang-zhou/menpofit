@@ -33,9 +33,7 @@ class DeformationField(AAM):
         template = self.appearance_models[level].mean()
         landmarks = template.landmarks['source'].lms
 
-        reference_frame = self._build_reference_frame(
-            shape_instance)
-
+        # use spare shape
         sparse_rate = 8
         w, h = template.shape
         sparse_index = []
@@ -45,9 +43,11 @@ class DeformationField(AAM):
                 if index < landmarks.n_points:
                     sparse_index.append(index)
 
-        source = PointCloud(
-            reference_frame.landmarks['source'].lms.points[sparse_index]
+        reference_frame = self._build_reference_frame(
+            PointCloud(shape_instance.points[sparse_index])
         )
+
+        source = reference_frame.landmarks['source'].lms
 
         target = PointCloud(landmarks.points[sparse_index])
 
@@ -59,4 +59,4 @@ class DeformationField(AAM):
     def _build_reference_frame(self, reference_shape):
 
         return build_reference_frame(
-            reference_shape, trilist=None, boundary=0)
+            reference_shape, trilist=None, boundary=10)
