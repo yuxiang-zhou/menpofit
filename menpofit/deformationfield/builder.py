@@ -9,6 +9,7 @@ from menpo.transform.groupalign.base import MultipleAlignment
 from menpo.math import principal_component_decomposition as pca
 from menpo.model import PCAModel
 from menpo.visualize import print_dynamic, progress_bar_str
+from menpo.transform import Translation
 
 import numpy as np
 
@@ -19,13 +20,14 @@ class ICP(MultipleAlignment):
         self.transformations = []
         self.point_correspondence = []
 
-        # # sort sources
-        # sources = np.array(sources)
-        # sortindex = np.argsort(np.array([s.n_points for s in sources]))[-1::-1]
-        # sources = sources[sortindex]
+        # sort sources in number of points
+        sources = np.array(sources)
+        sortindex = np.argsort(np.array([s.n_points for s in sources]))[-1::-1]
+        sources = sources[sortindex]
 
         if target is None:
             target = sources[0]
+        sources = sources[sortindex]
 
         super(ICP, self).__init__(sources, target)
 
@@ -175,7 +177,7 @@ class DeformationFieldBuilder(AAMBuilder):
                  trilist=None, normalization_diagonal=None, n_levels=3,
                  downscale=2, scaled_shape_models=False,
                  max_shape_components=None, max_appearance_components=None,
-                 boundary=3):
+                 boundary=0):
         super(DeformationFieldBuilder, self).__init__(
             features, transform, trilist, normalization_diagonal, n_levels,
             downscale, scaled_shape_models, max_shape_components,
@@ -349,9 +351,10 @@ class DeformationFieldBuilder(AAMBuilder):
 
     def _build_shape_model(self, shapes, max_components):
         # Align Shapes Using ICP
-        aligned_shapes = ICP(shapes).aligned_shapes
+        self._icp = icp = ICP(shapes)
+        aligned_shapes = icp.aligned_shapes
 
-        # Build Reference Frame
+        # Build Reference Frame from Aligned Shapes
         bound_list = []
         for s in aligned_shapes:
             bmin, bmax = s.bounds()
@@ -365,20 +368,47 @@ class DeformationFieldBuilder(AAMBuilder):
             DeformationFieldBuilder, self
         )._build_reference_frame(bound_list)
 
-        # compute non-linear transforms (tps)
-        self.transforms = transforms = (
-            [self.transform(a_s, s)
-             for a_s, s in zip(aligned_shapes, shapes)])
+        # Set All True Pixels for Mask
+        self.reference_frame.mask.pixels = np.ones(
+            self.reference_frame.mask.pixels.shape, dtype=np.bool)
 
-        self.reference_frame.landmarks['source'] = \
-            PointCloud(self.reference_frame.mask.true_indices())
+        # Get Dense Shape from Masked Image
+        dense_reference_shape = PointCloud(
+            self.reference_frame.mask.true_indices()
+        )
+
+        # Set Dense Shape as Reference Landmarks
+        self.reference_frame.landmarks['source'] = dense_reference_shape
+
+        # compute non-linear transforms (tps)
+        self._aligned_shapes = []
+        self._shapes = shapes
+        transforms = []
+
+        align_centre = icp.target.centre_of_bounds()
+        align_t = Translation(
+            dense_reference_shape.centre_of_bounds()-align_centre
+        )
+        align_corr = icp.point_correspondence
+
+        for a_s, a_corr in zip(aligned_shapes, align_corr):
+            # Align shapes with reference frame
+            temp_as = align_t.apply(a_s)
+            temp_s = align_t.apply(PointCloud(icp.target.points[a_corr]))
+
+            self._aligned_shapes.append(temp_as)
+            transforms.append(self.transform(temp_s, temp_as))
+
+        self.transforms = transforms
 
         # build dense shapes
         dense_shapes = []
         for i, (t, s) in enumerate(zip(transforms, shapes)):
-            warped_points = t.apply(self.reference_frame.mask.true_indices())
-            dense_shape = PointCloud(warped_points)
+            warped_points = t.apply(dense_reference_shape)
+            dense_shape = warped_points
             dense_shapes.append(dense_shape)
+
+        self._dense_shapes = dense_shapes
 
         # build dense shape model
         dense_shape_model = super(DeformationFieldBuilder, self). \
@@ -390,6 +420,21 @@ class DeformationFieldBuilder(AAMBuilder):
                             label, verbose, level_str):
         if verbose:
             print_dynamic('{}Computing transforms'.format(level_str))
+
+        transforms = []
+        for a_s, s, i in zip(self._aligned_shapes, self._shapes,
+                             feature_images):
+            image_center = i.landmarks[group][label].centre_of_bounds()
+            # Align shapes with images
+            temp_as = Translation(
+                image_center-a_s.centre_of_bounds()
+            ).apply(a_s)
+
+            temp_s = Translation(
+                image_center-s.centre_of_bounds()
+            ).apply(s)
+
+            transforms.append(self.transform(temp_as, temp_s))
 
         return self.transforms
 

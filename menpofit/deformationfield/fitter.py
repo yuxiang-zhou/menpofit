@@ -51,7 +51,7 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
     def set_target(self, target):
         if target.n_points < self.target.n_points:
             tmin, tmax = target.bounds()
-            smin, smax = self.target.bounds()
+            smin, smax = self.model.mean().bounds()
             ss = PointCloud(np.array(
                 [[smin[0], smin[1]],
                 [smin[0], smax[1]],
@@ -67,7 +67,7 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
             )
             t = DifferentiableAlignmentSimilarity(ss, tt)
 
-            target = t.apply(self.target)
+            target = t.apply(self.model.mean())
 
         OrthoPDM.set_target(self, target)
 
