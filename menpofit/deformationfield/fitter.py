@@ -1,9 +1,8 @@
-from menpofit.aam.fitter import LucasKanadeAAMFitter
+from menpofit.aam.fitter import LucasKanadeAAMFitter, AAMMultilevelFittingResult
 from menpofit.lucaskanade.appearance import AlternatingInverseCompositional
 from menpofit.modelinstance import OrthoPDM
 from menpofit.transform import DifferentiableAlignmentSimilarity
-from menpofit.fittingresult import ParametricFittingResult, compute_error, \
-    MultilevelFittingResult
+from menpofit.fittingresult import ParametricFittingResult
 from menpo.transform.base import Transform, VInvertible, VComposable
 from menpo.transform import UniformScale, Translation
 from menpo.shape import PointCloud
@@ -111,7 +110,7 @@ class DeformationFieldAICompositional(AlternatingInverseCompositional):
                                        gt_shape=gt_shape)
 
 
-class DFMultilevelFittingResult(MultilevelFittingResult):
+class DFMultilevelFittingResult(AAMMultilevelFittingResult):
     def final_error(self, error_type='me_norm'):
         return 100
 
