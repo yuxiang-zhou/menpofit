@@ -53,8 +53,7 @@ class DeformationField(AAM):
 
         transform = self.transform(source, target)
 
-        return appearance_instance.warp_to_mask(reference_frame.mask,
-                                                transform, warp_landmarks=True)
+        return appearance_instance
 
     def _build_reference_frame(self, reference_shape):
 
