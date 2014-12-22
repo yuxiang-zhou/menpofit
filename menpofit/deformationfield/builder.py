@@ -25,12 +25,14 @@ class ICP(MultipleAlignment):
         sortindex = np.argsort(np.array([s.n_points for s in sources]))[-1::-1]
         sources = sources[sortindex]
 
+        # Set first source as target (e.g. having most number of points)
         if target is None:
             target = sources[0]
         sources = sources[sortindex]
 
         super(ICP, self).__init__(sources, target)
 
+        # Align Source with Target
         self.aligned_shapes = np.array(
             [self._align_source(s) for s in sources]
         )
