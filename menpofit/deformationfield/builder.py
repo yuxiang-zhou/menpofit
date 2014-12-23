@@ -372,8 +372,16 @@ class DeformationFieldBuilder(AAMBuilder):
             # train shape model and find reference frame
             if verbose:
                 print_dynamic('{}Building shape model'.format(level_str))
-            shape_model = self._build_shape_model(
-                train_shapes, self.max_shape_components[rj])
+            if j == 0:
+                shape_model = self._build_shape_model(
+                    train_shapes, self.max_shape_components[rj])
+            else:
+                if self.scaled_shape_models:
+                    shape_model = self._build_shape_model(
+                        train_shapes, self.max_shape_components[rj])
+                else:
+                    shape_model = shape_models[-1].copy()
+
             reference_frame = self._build_reference_frame(shape_model.mean())
 
             # add shape model to the list
@@ -453,8 +461,7 @@ class DeformationFieldBuilder(AAMBuilder):
 
     def _build_shape_model(self, shapes, max_components):
         # Align Shapes Using ICP
-        pre_icp = ICP(shapes)
-        self._icp = icp = NICP(pre_icp.aligned_shapes)
+        self._icp = icp = ICP(shapes)
         aligned_shapes = icp.aligned_shapes
 
         # Build Reference Frame from Aligned Shapes
@@ -484,7 +491,6 @@ class DeformationFieldBuilder(AAMBuilder):
         self.reference_frame.landmarks['source'] = dense_reference_shape
 
         # compute non-linear transforms (tps)
-        self._aligned_shapes = []
         self._shapes = shapes
         transforms = []
 
@@ -492,7 +498,10 @@ class DeformationFieldBuilder(AAMBuilder):
         align_t = Translation(
             dense_reference_shape.centre_of_bounds()-align_centre
         )
-        align_corr = icp.point_correspondence
+
+        # Finding Correspondance
+        self._nicp = nicp = NICP(icp.aligned_shapes, icp.target)
+        align_corr = nicp.point_correspondence
 
         for a_s, a_corr in zip(aligned_shapes, align_corr):
             # Align shapes with reference frame
