@@ -492,6 +492,7 @@ class DeformationFieldBuilder(AAMBuilder):
 
         # compute non-linear transforms (tps)
         self._shapes = shapes
+        self._aligned_shapes = []
         transforms = []
 
         align_centre = icp.target.centre_of_bounds()
