@@ -40,6 +40,17 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
         # self.pinv_v = scipy.linalg.pinv(v)
 
     @property
+    def n_dims(self):
+        r"""
+        The dimensionality of the data the transform operates on.
+
+        None if the transform is not dimension specific.
+
+        :type: int or None
+        """
+        return 2
+
+    @property
     def dense_target(self):
         return PointCloud(self.target.points[self.n_landmarks:])
 
