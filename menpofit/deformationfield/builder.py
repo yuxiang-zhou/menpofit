@@ -9,7 +9,7 @@ from menpo.transform.groupalign.base import MultipleAlignment
 from menpo.math import principal_component_decomposition as pca
 from menpo.model import PCAModel
 from menpo.visualize import print_dynamic, progress_bar_str
-from menpo.transform import Translation
+from menpo.transform import Translation, AlignmentSimilarity
 from menpo.shape import TriMesh
 
 from scipy.spatial import KDTree
@@ -26,12 +26,11 @@ class ICP(MultipleAlignment):
         # sort sources in number of points
         sources = np.array(sources)
         sortindex = np.argsort(np.array([s.n_points for s in sources]))[-1::-1]
-        sources = sources[sortindex]
+        sort_sources = sources[sortindex]
 
         # Set first source as target (e.g. having most number of points)
         if target is None:
-            target = sources[0]
-        sources = sources[sortindex]
+            target = sort_sources[0]
 
         super(ICP, self).__init__(sources, target)
 
@@ -333,7 +332,8 @@ class DeformationFieldBuilder(AAMBuilder):
 
         shape_models = []
         appearance_models = []
-
+        self._feature_images = []
+        self._warpped_images = []
         # for each pyramid level (high --> low)
         for j in range(self.n_levels):
             # since models are built from highest to lowest level, the
@@ -355,6 +355,9 @@ class DeformationFieldBuilder(AAMBuilder):
                             progress_bar_str((c + 1.) / len(generators),
                                              show_bar=False)))
                 feature_images.append(next(g))
+
+
+            self._feature_images.append(feature_images)
 
             # extract potentially rescaled shapes
             shapes = [i.landmarks[group][label] for i in feature_images]
@@ -400,8 +403,9 @@ class DeformationFieldBuilder(AAMBuilder):
                         level_str,
                         progress_bar_str(float(c + 1) / len(feature_images),
                                          show_bar=False)))
-                si = i.rescale(np.power(self.downscale, j))
+                si = self._image_pre_process(i, j, c)
                 warped_images.append(si.warp_to_mask(reference_frame.mask, t))
+            self._warpped_images.append(warped_images)
 
             # attach reference_frame to images' source shape
             for i in warped_images:
@@ -464,6 +468,12 @@ class DeformationFieldBuilder(AAMBuilder):
         self._icp = icp = ICP(shapes)
         aligned_shapes = icp.aligned_shapes
 
+        # Store Removed Transform
+        self._removed_transform = []
+        for a_s, s in zip(aligned_shapes, shapes):
+            ast = AlignmentSimilarity(a_s, s)
+            self._removed_transform.append(ast)
+
         # Build Reference Frame from Aligned Shapes
         bound_list = []
         for s in aligned_shapes:
@@ -489,8 +499,6 @@ class DeformationFieldBuilder(AAMBuilder):
 
         # Set Dense Shape as Reference Landmarks
         self.reference_frame.landmarks['source'] = dense_reference_shape
-
-        # compute non-linear transforms (tps)
         self._shapes = shapes
         self._aligned_shapes = []
         transforms = []
@@ -500,11 +508,37 @@ class DeformationFieldBuilder(AAMBuilder):
             dense_reference_shape.centre_of_bounds()-align_centre
         )
 
-        # Finding Correspondance
-        self._nicp = nicp = NICP(icp.aligned_shapes, icp.target)
-        align_corr = nicp.point_correspondence
+        self._rf_align = Translation(
+            align_centre - dense_reference_shape.centre_of_bounds()
+        )
 
-        for a_s, a_corr in zip(aligned_shapes, align_corr):
+        # Ground Truth Correspondence
+        # align_gcorr = [range(55)]*len(shapes)
+
+        # Finding Correspondance
+        # self._nicp = nicp = NICP(icp.aligned_shapes, icp.target)
+        # align_gcorr = nicp.point_correspondence
+
+        # Finding Correspondence by Group
+        align_gcorr = None
+        groups = np.array([range(20),
+                           range(20, 35),
+                           range(35, 50),
+                           range(50, 55)])
+
+        for g in groups:
+            g_align_s = []
+            for aligned_s in icp.aligned_shapes:
+                g_align_s.append(PointCloud(aligned_s.points[g]))
+            gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+            g_align = np.array(gnicp.point_correspondence) + g[0]
+            if align_gcorr is None:
+                align_gcorr = g_align
+            else:
+                align_gcorr = np.hstack((align_gcorr, g_align))
+
+        # compute non-linear transforms (tps)
+        for a_s, a_corr in zip(aligned_shapes, align_gcorr):
             # Align shapes with reference frame
             temp_as = align_t.apply(a_s)
             temp_s = align_t.apply(PointCloud(icp.target.points[a_corr]))
@@ -513,6 +547,7 @@ class DeformationFieldBuilder(AAMBuilder):
             transforms.append(self.transform(temp_s, temp_as))
 
         self.transforms = transforms
+        self._corr = align_gcorr
 
         # build dense shapes
         dense_shapes = []
@@ -529,27 +564,34 @@ class DeformationFieldBuilder(AAMBuilder):
 
         return dense_shape_model
 
+    def _image_pre_process(self, img, scale, index):
+        si = img.rescale(np.power(self.downscale, scale))
+        return si
+
     def _compute_transforms(self, reference_frame, feature_images, group,
                             label, verbose, level_str):
         if verbose:
             print_dynamic('{}Computing transforms'.format(level_str))
 
+        # transforms = []
+        # for a_s, s, i in zip(self._aligned_shapes, self._shapes,
+        #                      feature_images):
+        #     image_center = i.landmarks[group][label].centre_of_bounds()
+        #     # Align shapes with images
+        #     temp_as = Translation(
+        #         image_center-a_s.centre_of_bounds()
+        #     ).apply(a_s)
+        #
+        #     temp_s = Translation(
+        #         image_center-s.centre_of_bounds()
+        #     ).apply(s)
+        #
+        #     transforms.append(self.transform(temp_as, temp_s))
         transforms = []
-        for a_s, s, i in zip(self._aligned_shapes, self._shapes,
-                             feature_images):
-            image_center = i.landmarks[group][label].centre_of_bounds()
-            # Align shapes with images
-            temp_as = Translation(
-                image_center-a_s.centre_of_bounds()
-            ).apply(a_s)
-
-            temp_s = Translation(
-                image_center-s.centre_of_bounds()
-            ).apply(s)
-
-            transforms.append(self.transform(temp_as, temp_s))
-
-        return self.transforms
+        for t, rt in zip(self.transforms, self._removed_transform):
+            ct = t.compose_before(self._rf_align).compose_before(rt)
+            transforms.append(ct)
+        return transforms
 
     def _build_reference_frame(self, mean_shape, sparsed=True):
         r"""
