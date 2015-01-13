@@ -1,0 +1,124 @@
+from sklearn import svm
+from menpo.shape import PointCloud
+from menpo.shape import TriMesh
+from menpo.image import MaskedImage
+from menpo.visualize.base import Viewable
+from scipy.spatial.distance import euclidean as dist
+
+import numpy as np
+
+
+class SVS(Viewable):
+    def __init__(self, points, nu=0.5, kernel='rbf', gamma=0.03):
+        self.points = points
+        self._build(nu, kernel, gamma)
+
+    def _build(self, nu, kernel, gamma):
+        training_points_positive = self.points
+
+        margin = 10
+        min_p = np.min(training_points_positive, axis=0).astype('int')
+        max_p = np.max(training_points_positive, axis=0).astype('int')
+        self._range_x = range_x = range(min_p[0]-margin, max_p[0]+margin)
+        self._range_y = range_y = range(min_p[1]-margin, max_p[1]+margin)
+
+        # Generate negtive points
+        # Build Triangle Mesh
+        tplt_tri = TriMesh(training_points_positive).trilist
+
+        # Generate Edge List
+        tplt_edge = tplt_tri[:, [0, 1]]
+        tplt_edge = np.vstack((tplt_edge, tplt_tri[:, [0, 2]]))
+        tplt_edge = np.vstack((tplt_edge, tplt_tri[:, [1, 2]]))
+        tplt_edge = np.sort(tplt_edge)
+
+        # Get Unique Edge
+        b = np.ascontiguousarray(tplt_edge).view(
+            np.dtype((np.void, tplt_edge.dtype.itemsize * tplt_edge.shape[1]))
+        )
+        _, idx = np.unique(b, return_index=True)
+        tplt_edge = tplt_edge[idx]
+
+        # Sample Negative Points
+        tolerance = 5
+        training_points_negative = []
+        for i in range_x:
+            for j in range_y:
+                valid = True
+                max_dist = 2*tolerance
+                for e in tplt_edge:
+                    min_dist = minimum_distance(
+                        training_points_positive[e[0]],
+                        training_points_positive[e[1]],
+                        np.array([i, j]))
+                    if min_dist < max_dist:
+                        max_dist = min_dist
+                    if min_dist < tolerance:
+                        valid = False
+                        break
+
+                if valid:  # and max_dist < 2*tolerance:
+                    training_points_negative.append([i, j])
+
+        # Sparse Negative Samples
+        training_points_negative = np.array(training_points_negative)
+        m = training_points_negative.shape[0]
+        training_points_negative = training_points_negative[
+            np.random.randint(m, size=m*0.2)]
+
+        self._positive_pts = training_points_positive
+        self._negative_pts = training_points_negative
+
+        # Build SVS
+        n = training_points_positive.shape[0]
+        m = training_points_negative.shape[0]
+
+        training_points = np.vstack((training_points_positive,
+                                     training_points_negative))
+        classification = np.hstack((np.ones(n), np.zeros(m)))
+
+        weights = classification*(m/n-1) + 1
+
+        svs = svm.NuSVC(nu=nu, kernel=kernel, gamma=gamma)
+        svs.fit(training_points, classification, sample_weight=weights)
+
+        self.svs = svs
+
+    def view_samples(self):
+        PointCloud(self._negative_pts).view()
+        PointCloud(self._positive_pts).view(colour_array='w')
+
+    def view(self, xr=None, yr=None):
+        if xr is None:
+            xr = self._range_x
+        if yr is None:
+            yr = self._range_y
+
+        w = len(xr)
+        h = len(yr)
+        img = MaskedImage.blank([h, w])
+        for i, x in enumerate(xr):
+            for j, y in enumerate(yr):
+                img.pixels[h-j-1, i] = self.svs.decision_function([[x, y]])[0]
+
+        img.view()
+
+
+def minimum_distance(v, w, p):
+#     Return minimum distance between line segment (v,w) and point p
+    l2 = dist(v,w)  # i.e. |w-v|^2 -  avoid a sqrt
+
+    if l2 == 0.0:
+        return dist(p, v)
+
+#     Consider the line extending the segment, parameterized as v + t (w - v).
+#     We find projection of point p onto the line.
+#     It falls where t = [(p-v) . (w-v)] / |w-v|^2
+    t = np.dot(p - v, w - v) / l2
+    if t < 0.0:
+        return dist(p, v)      # // Beyond the 'v' end of the segment
+    elif t > 1.0:
+        return dist(p, w)  # // Beyond the 'w' end of the segment
+
+    projection = v + t * (w - v) # // Projection falls on the segment
+    return dist(p, projection)
