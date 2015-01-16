@@ -1,7 +1,7 @@
 from menpofit.aam import AAMBuilder
 from menpofit.base import create_pyramid
 from menpofit.transform import DifferentiableThinPlateSplines
-from menpofit.transform import DifferentiablePiecewiseAffine
+from menpofit.transform import DifferentiablePiecewiseAffine as pwa
 from menpofit.builder import normalization_wrt_reference_shape
 from menpo.feature import igo
 from menpo.shape import PointCloud
@@ -247,6 +247,7 @@ class NICP(ICP):
         _, point_corr = kdOBJ.query(fit_2d)
         return fit_2d, transforms, iters, point_corr
 
+
 def _compose_r(qr):
     q0, q1, q2, q3 = qr
     r = np.zeros((3, 3))
@@ -461,7 +462,9 @@ class DeformationFieldBuilder(AAMBuilder):
                                 n_training_images,
                                 DifferentiableThinPlateSplines,
                                 self.features, self.reference_shape,
-                                self.downscale, self.scaled_shape_models)
+                                self.downscale, self.scaled_shape_models,
+                                self.reference_frame, self._icp,
+                                self.normalization_diagonal)
 
     def _build_shape_model(self, shapes, max_components):
         # Align Shapes Using ICP
@@ -545,6 +548,7 @@ class DeformationFieldBuilder(AAMBuilder):
 
             self._aligned_shapes.append(temp_as)
             transforms.append(self.transform(temp_s, temp_as))
+            # transforms.append(pwa(temp_s, temp_as))
 
         self.transforms = transforms
         self._corr = align_gcorr

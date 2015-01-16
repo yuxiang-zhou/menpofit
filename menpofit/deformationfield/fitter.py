@@ -2,15 +2,18 @@ from menpofit.aam.fitter import LucasKanadeAAMFitter, AAMMultilevelFittingResult
 from menpofit.lucaskanade.appearance import AlternatingInverseCompositional
 from menpofit.modelinstance import OrthoPDM
 from menpofit.transform import DifferentiableAlignmentSimilarity
+from menpofit.transform import DifferentiableThinPlateSplines as tps
 from menpofit.fittingresult import ParametricFittingResult
 from menpo.transform.base import Transform, VInvertible, VComposable
-from menpo.transform import UniformScale, Translation
+from menpo.transform import Translation, AlignmentSimilarity
+from menpofit.base import create_pyramid
+from menpofit.builder import normalization_wrt_reference_shape
 from menpo.shape import PointCloud
 
-from .builder import ICP
+from .builder import ICP, NICP
 
 import numpy as np
-import scipy
+from numpy.linalg import norm
 
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
@@ -122,36 +125,189 @@ class DeformationFieldAICompositional(AlternatingInverseCompositional):
 
 
 class DFMultilevelFittingResult(AAMMultilevelFittingResult):
+
+    def __init__(self, image, multiple_fitter, fitting_results,
+                 affine_correction, gt_shape=None):
+        super(DFMultilevelFittingResult, self).__init__(
+            image, multiple_fitter, fitting_results, affine_correction,
+            gt_shape
+        )
+        self._prepare_gt_rf()
+
     def final_error(self, error_type='me_norm'):
-        return 100
+        t = self.fitter.fitters[2].transform
+        return compute_error(t, self.final_shape, self.aam.reference_frame,
+                self.image, self._warpped_images[0][0])
 
     def initial_error(self, error_type='me_norm'):
-        return 100
+        t = self.fitter.fitters[2].transform
+        return compute_error(t, self.initial_shape, self.aam.reference_frame,
+                self.image, self._warpped_images[0][0])
 
-    pass
-    # def errors(self, error_type='me_norm'):
-    #     r"""
-    #     Returns a list containing the error at each fitting iteration.
-    #
-    #     Parameters
-    #     -----------
-    #     error_type : `str` ``{'me_norm', 'me', 'rmse'}``, optional
-    #         Specifies the way in which the error between the fitted and
-    #         ground truth shapes is to be computed.
-    #
-    #     Returns
-    #     -------
-    #     errors : `list` of `float`
-    #         The errors at each iteration of the fitting process.
-    #     """
-    #     if self.gt_shape is not None:
-    #         return [compute_error(
-    #             PointCloud(t.points[:self.fitting_results[-1].n_landmarks]),
-    #             self.gt_shape, error_type)
-    #             for t in self.shapes]
-    #     else:
-    #         raise ValueError('Ground truth has not been set, errors cannot '
-    #                          'be computed')
+    @property
+    def aam(self):
+        return self.fitter.aam
+
+    def errors(self, error_type='me_norm'):
+        r"""
+        Returns a list containing the error at each fitting iteration.
+
+        Parameters
+        -----------
+        error_type : `str` ``{'me_norm', 'me', 'rmse'}``, optional
+            Specifies the way in which the error between the fitted and
+            ground truth shapes is to be computed.
+
+        Returns
+        -------
+        errors : `list` of `float`
+            The errors at each iteration of the fitting process.
+        """
+        # if self.gt_shape is not None:
+        #     return [compute_error(
+        #         PointCloud(t.points[:self.fitting_results[-1].n_landmarks]),
+        #         self.gt_shape, error_type)
+        #         for t in self.shapes]
+        # else:
+        #     raise ValueError('Ground truth has not been set, errors cannot '
+        #                      'be computed')
+        t = self.fitter.fitters[2].transform
+        return [compute_error(t, s, self.aam.reference_frame,
+                self.image, self.appearance_reconstructions[-1]) for i, s in
+                enumerate(self.shapes)]
+
+    def true_errors(self):
+        return img_error(
+            self._warpped_images[0][0],
+            self.appearance_reconstructions[-1]
+        )
+
+    def _prepare_gt_rf(self):
+        gt_image = self.image
+        # compute reference_shape and normalize images size
+        self.reference_shape, normalized_images = \
+            normalization_wrt_reference_shape(
+                [gt_image], None, None, self.aam.normalization_diagonal, True
+            )
+
+        # create pyramid
+        generators = create_pyramid(normalized_images, self.n_levels,
+                                    self.downscale, self.aam.features,
+                                    verbose=True)
+        self._feature_images = []
+        self._warpped_images = []
+        for j in range(self.n_levels):
+            # since models are built from highest to lowest level, the
+            # parameters in form of list need to use a reversed index
+            rj = self.n_levels - j - 1
+
+            # get feature images of current level
+            feature_images = []
+            for c, g in enumerate(generators):
+                feature_images.append(next(g))
+
+            self._feature_images.append(feature_images)
+
+            # extract potentially rescaled shapes
+            shapes = [i.landmarks[None][None] for i in feature_images]
+
+            # define shapes that will be used for training
+            if j == 0:
+                original_shapes = shapes
+                train_shapes = shapes
+            else:
+                train_shapes = original_shapes
+
+            # Align Shapes Using ICP
+            icp = ICP(train_shapes, self.aam.icp.target)
+            aligned_shapes = icp.aligned_shapes
+
+            # Store Removed Transform
+            self._removed_transform = []
+            for a_s, s in zip(aligned_shapes, train_shapes):
+                ast = AlignmentSimilarity(a_s, s)
+                self._removed_transform.append(ast)
+
+            # Get Dense Shape from Masked Image
+            dense_reference_shape = self.aam.reference_frame.landmarks[
+                'source'].lms
+            self._transforms = transforms = []
+
+            align_centre = icp.target.centre_of_bounds()
+            align_t = Translation(
+                dense_reference_shape.centre_of_bounds()-align_centre
+            )
+
+            self._rf_align = Translation(
+                align_centre - dense_reference_shape.centre_of_bounds()
+            )
+
+            # Ground Truth Correspondence
+            # align_gcorr = [range(55)]*len(shapes)
+
+            # Finding Correspondance
+            # self._nicp = nicp = NICP(icp.aligned_shapes, icp.target)
+            # align_gcorr = nicp.point_correspondence
+
+            # Finding Correspondence by Group
+            align_gcorr = None
+            groups = np.array([range(20),
+                               range(20, 35),
+                               range(35, 50),
+                               range(50, 55)])
+
+            for g in groups:
+                g_align_s = []
+                for aligned_s in icp.aligned_shapes:
+                    g_align_s.append(PointCloud(aligned_s.points[g]))
+                gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+                g_align = np.array(gnicp.point_correspondence) + g[0]
+                if align_gcorr is None:
+                    align_gcorr = g_align
+                else:
+                    align_gcorr = np.hstack((align_gcorr, g_align))
+
+            # compute non-linear transforms (tps)
+            for a_s, a_corr in zip(aligned_shapes, align_gcorr):
+                # Align shapes with reference frame
+                temp_as = align_t.apply(a_s)
+                temp_s = align_t.apply(PointCloud(icp.target.points[a_corr]))
+
+                transforms.append(tps(temp_s, temp_as))
+                # transforms.append(pwa(temp_s, temp_as))pes
+
+            reference_frame = self.aam.reference_frame
+
+            # compute transforms
+            transforms_new = []
+            for t, rt in zip(transforms, self._removed_transform):
+                ct = t.compose_before(self._rf_align).compose_before(rt)
+                transforms_new.append(ct)
+
+            # warp images to reference frame
+            warped_images = []
+            for c, (i, t) in enumerate(zip(feature_images, transforms_new)):
+
+                si = i.rescale(np.power(self.downscale, j))
+                warped_images.append(si.warp_to_mask(reference_frame.mask, t))
+            self._warpped_images.append(warped_images)
+
+
+def img_error(img_1, img_2):
+    t_pixels = img_1.pixels
+    w_pixels = img_2.pixels
+    diff = t_pixels - w_pixels
+    channel_error = []
+    for i in range(diff.shape[2]):
+        channel_error.append(np.sum(diff[:, :, i]**2))
+
+    return sum(channel_error)
+
+
+def compute_error(t, shape, ref, gt_img, rec_img):
+    t.set_target(shape)
+    test_img = gt_img.warp_to_mask(ref.mask, t)
+    return img_error(test_img, rec_img)
 
 
 class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
@@ -247,6 +403,11 @@ class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
         """
         return DFMultilevelFittingResult(image, self, fitting_results,
                             affine_correction, gt_shape=gt_shape)
+
+    @property
+    def fitters(self):
+        return self._fitters
+
 
     @property
     def _str_title(self):
