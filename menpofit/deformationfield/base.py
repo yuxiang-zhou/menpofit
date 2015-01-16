@@ -9,10 +9,14 @@ class DeformationField(AAM):
 
     def __init__(self, shape_models, appearance_models, n_training_images,
                  transform, features, reference_shape, downscale,
-                 scaled_shape_models):
+                 scaled_shape_models, reference_frame, icp,
+                 normalization_diagonal):
         super(DeformationField, self).__init__(
             shape_models, appearance_models, n_training_images, transform,
             features, reference_shape, downscale, scaled_shape_models)
+        self.reference_frame = reference_frame
+        self.icp = icp
+        self.normalization_diagonal = normalization_diagonal
 
     @property
     def _str_title(self):
