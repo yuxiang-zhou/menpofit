@@ -464,11 +464,12 @@ class DeformationFieldBuilder(AAMBuilder):
                                 self.features, self.reference_shape,
                                 self.downscale, self.scaled_shape_models,
                                 self.reference_frame, self._icp,
-                                self.normalization_diagonal)
+                                self.normalization_diagonal,
+                                self.n_landmarks)
 
     def _build_shape_model(self, shapes, max_components):
         # Align Shapes Using ICP
-        self._icp = icp = ICP(shapes)
+        self._icp = icp = ICP(shapes, shapes[0])
         aligned_shapes = icp.aligned_shapes
 
         # Store Removed Transform
@@ -495,11 +496,21 @@ class DeformationFieldBuilder(AAMBuilder):
         self.reference_frame.mask.pixels = np.ones(
             self.reference_frame.mask.pixels.shape, dtype=np.bool)
 
+        # Mask Reference Frame
+        self.n_landmarks = icp.target.points.shape[0]
+        self.reference_frame.landmarks['sparse'] = icp.target
+        self.reference_frame.constrain_mask_to_landmarks(group='sparse')
+
         # Get Dense Shape from Masked Image
         dense_reference_shape = PointCloud(
-            self.reference_frame.mask.true_indices()
+            np.vstack((
+                icp.target.points,
+                self.reference_frame.mask.true_indices()
+            ))
         )
-
+        # dense_reference_shape = PointCloud(
+        #     self.reference_frame.mask.true_indices()
+        # )
         # Set Dense Shape as Reference Landmarks
         self.reference_frame.landmarks['source'] = dense_reference_shape
         self._shapes = shapes

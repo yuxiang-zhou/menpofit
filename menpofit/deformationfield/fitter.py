@@ -9,11 +9,12 @@ from menpo.transform import Translation, AlignmentSimilarity
 from menpofit.base import create_pyramid
 from menpofit.builder import normalization_wrt_reference_shape
 from menpo.shape import PointCloud
+from menpofit.fittingresult import compute_error
 
 from .builder import ICP, NICP
 
 import numpy as np
-from numpy.linalg import norm
+from scipy.spatial import KDTree
 
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
@@ -135,14 +136,23 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         self._prepare_gt_rf()
 
     def final_error(self, error_type='me_norm'):
-        t = self.fitter.fitters[2].transform
-        return compute_error(t, self.final_shape, self.aam.reference_frame,
-                self.image, self._warpped_images[0][0])
+        # t = self.fitter.fitters[-1].transform
+        # return compute_error(t, self.final_shape, self.aam.reference_frame,
+        #         self.image, self.appearance_reconstructions[-1])
+        return compute_error(
+            PointCloud(self.final_shape.points[self._lms_corr[0]]),
+            self._gt_shape
+        )
 
     def initial_error(self, error_type='me_norm'):
-        t = self.fitter.fitters[2].transform
-        return compute_error(t, self.initial_shape, self.aam.reference_frame,
-                self.image, self._warpped_images[0][0])
+        # t = self.fitter.fitters[-1].transform
+        # return compute_error(t, self.initial_shape, self.aam.reference_frame,
+        #         self.image, self.appearance_reconstructions[0])
+
+        return compute_error(
+            PointCloud(self.initial_shape.points[self._lms_corr[0]]),
+            self._gt_shape
+        )
 
     @property
     def aam(self):
@@ -171,15 +181,34 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         # else:
         #     raise ValueError('Ground truth has not been set, errors cannot '
         #                      'be computed')
-        t = self.fitter.fitters[2].transform
-        return [compute_error(t, s, self.aam.reference_frame,
-                self.image, self.appearance_reconstructions[-1]) for i, s in
-                enumerate(self.shapes)]
+        # t = self.fitter.fitters[-1].transform
+        # return [compute_appearance_error(t, s, self.aam.reference_frame,
+        #         self.image, ar) for (s, ar) in
+        #         zip(self.shapes, self.appearance_reconstructions)]
+
+        return [compute_error(
+            PointCloud(s.points[self._lms_corr[0]]),
+            self._gt_shape
+        ) for s in self.shapes]
+
+    def appearance_errors(self):
+        t = self.fitter.fitters[-1].transform
+        return [compute_appearance_error(t, s, self.aam.reference_frame,
+                self.image, ar) for (s, ar) in
+                zip(self.shapes, self.appearance_reconstructions)]
 
     def true_errors(self):
-        return img_error(
-            self._warpped_images[0][0],
-            self.appearance_reconstructions[-1]
+        # weights = self.aam.appearance_models[-1].project(self._warpped_images[0][0])
+        # return img_error(
+        #     self._warpped_images[0][0],
+        #     self.aam.appearance_models[-1].instance(weights)
+        # )
+        t = self.fitter.fitters[-1].transform
+        t.set_target(self._gt_shape)
+        ds = t.target.points
+        return compute_error(
+            PointCloud(ds[self._lms_corr[0]]),
+            self._gt_shape
         )
 
     def _prepare_gt_rf(self):
@@ -197,9 +226,6 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         self._feature_images = []
         self._warpped_images = []
         for j in range(self.n_levels):
-            # since models are built from highest to lowest level, the
-            # parameters in form of list need to use a reversed index
-            rj = self.n_levels - j - 1
 
             # get feature images of current level
             feature_images = []
@@ -278,6 +304,19 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
 
             reference_frame = self.aam.reference_frame
 
+            # build dense shapes
+            lms_corr = []
+            for i, (t, a_s) in enumerate(zip(transforms, aligned_shapes)):
+                dense_shape = t.apply(dense_reference_shape)
+                # dense_shape = PointCloud(dense_shape.points[
+                #     self.aam.n_landmarks:])
+                kdOBJ = KDTree(dense_shape.points)
+                _, match = kdOBJ.query(a_s.points)
+                lms_corr.append(
+                    match
+                )
+            self._lms_corr = lms_corr
+
             # compute transforms
             transforms_new = []
             for t, rt in zip(transforms, self._removed_transform):
@@ -297,14 +336,12 @@ def img_error(img_1, img_2):
     t_pixels = img_1.pixels
     w_pixels = img_2.pixels
     diff = t_pixels - w_pixels
-    channel_error = []
-    for i in range(diff.shape[2]):
-        channel_error.append(np.sum(diff[:, :, i]**2))
+    error = np.sum(diff[:, :, :]**2)
 
-    return sum(channel_error)
+    return error
 
 
-def compute_error(t, shape, ref, gt_img, rec_img):
+def compute_appearance_error(t, shape, ref, gt_img, rec_img):
     t.set_target(shape)
     test_img = gt_img.warp_to_mask(ref.mask, t)
     return img_error(test_img, rec_img)
@@ -367,7 +404,7 @@ class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
         self._fitters = []
         for j, (am, sm) in enumerate(zip(self.aam.appearance_models,
                                          self.aam.shape_models)):
-            transform = md_transform(sm)
+            transform = md_transform(sm, self.aam.n_landmarks)
             self._fitters.append(algorithm(am, transform, **kwargs))
 
     def _create_fitting_result(self, image, fitting_results, affine_correction,
