@@ -279,12 +279,11 @@ class DeformationFieldBuilder(AAMBuilder):
                  trilist=None, normalization_diagonal=None, n_levels=3,
                  downscale=2, scaled_shape_models=False,
                  max_shape_components=None, max_appearance_components=None,
-                 boundary=0, groups=[], template=0):
+                 boundary=0, template=0):
         super(DeformationFieldBuilder, self).__init__(
             features, transform, trilist, normalization_diagonal, n_levels,
             downscale, scaled_shape_models, max_shape_components,
             max_appearance_components, boundary)
-        self.groups = groups
         self.template = template
 
     def build(self, images, group=None, label=None, verbose=False):
@@ -471,36 +470,14 @@ class DeformationFieldBuilder(AAMBuilder):
 
     def _build_shape_model(self, shapes, max_components):
         # Simulate inconsist annotation
-        sample_shapes = []
         sample_groups = []
-        # full_index = range(shapes[0].n_points)
-        # for i, s in enumerate(shapes):
-        # #     # remove random landmarks for each shape
-        # #     #  - construct landmark group
-        # #     lindex = 0
-        # #     groups_temp = []
-        # #     for si in self.groups:
-        # #         groups_temp.append([full_index[lindex:si]])
-        # #         lindex = si
-        # #     groups_temp.append([full_index[lindex:s.n_points]])
-        # #
-        #     # sample_groups.append(np.array(groups_temp))
-        #     points = s.pixels.copy()
-        #     for rt in range((i % 3) + 1):
-        #         random_remove_index = np.random.randint(s.n_points)
-        #         points = np.delete(points, random_remove_index, 0)
-        # #         for gt in groups_temp:
-        # #             try:
-        # #                 gt.remove(random_remove_index)
-        # #             except ValueError:
-        # #                 pass
-        #     sample_shapes.append(PointCloud(points))
-
+        g_i = self._feature_images[0][self.template].landmarks[
+            'groups'].items()
         lindex = 0
-        for si in self.groups:
-            sample_groups.append(range(lindex, si))
-            lindex = si
-        sample_groups.append(range(lindex, shapes[self.template].n_points))
+        for i in g_i:
+            g_size = i[1].n_points
+            sample_groups.append(range(lindex, lindex + g_size))
+            lindex += g_size
 
         sample_shapes = shapes
         # Align Shapes Using ICP
