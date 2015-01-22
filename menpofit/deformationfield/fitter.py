@@ -191,7 +191,7 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         # return [compute_appearance_error(t, s, self.aam.reference_frame,
         #         self.image, ar) for (s, ar) in
         #         zip(self.shapes, self.appearance_reconstructions)]
-        corr = ICP(self.shapes, self._gt_shape).point_correspondence
+        corr = ICP(self.sparse_shapes, self._gt_shape).point_correspondence
 
         return [compute_error(
             PointCloud(s.points[:self.aam.n_landmarks]),
@@ -218,104 +218,117 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
             self._gt_shape
         )
 
-    # def _prepare_gt_rf(self):
-    #     gt_image = self.image
-    #     # compute reference_shape and normalize images size
-    #     self.reference_shape, normalized_images = \
-    #         normalization_wrt_reference_shape(
-    #             [gt_image], 'PTS', None, self.aam.normalization_diagonal, True
-    #         )
-    #
-    #     # create pyramid
-    #     generators = create_pyramid(normalized_images, self.n_levels,
-    #                                 self.downscale, self.aam.features,
-    #                                 verbose=True)
-    #     self._feature_images = []
-    #     self._warpped_images = []
-    #     for j in range(self.n_levels):
-    #
-    #         # get feature images of current level
-    #         feature_images = []
-    #         for c, g in enumerate(generators):
-    #             feature_images.append(next(g))
-    #
-    #         self._feature_images.append(feature_images)
-    #
-    #         # extract potentially rescaled shapes
-    #         shapes = [i.landmarks['PTS'][None] for i in feature_images]
-    #
-    #         # define shapes that will be used for training
-    #         if j == 0:
-    #             original_shapes = shapes
-    #             train_shapes = shapes
-    #         else:
-    #             train_shapes = original_shapes
-    #
-    #         # Align Shapes Using ICP
-    #         icp = ICP(train_shapes, self.aam.icp.target)
-    #         aligned_shapes = icp.aligned_shapes
-    #
-    #         # Store Removed Transform
-    #         self._removed_transform = []
-    #         for a_s, s in zip(aligned_shapes, train_shapes):
-    #             ast = AlignmentSimilarity(a_s, s)
-    #             self._removed_transform.append(ast)
-    #
-    #         # Get Dense Shape from Masked Image
-    #         dense_reference_shape = self.aam.reference_frame.landmarks[
-    #             'source'].lms
-    #         self._transforms = transforms = []
-    #
-    #         align_centre = icp.target.centre_of_bounds()
-    #         align_t = Translation(
-    #             dense_reference_shape.centre_of_bounds()-align_centre
-    #         )
-    #
-    #         self._rf_align = Translation(
-    #             align_centre - dense_reference_shape.centre_of_bounds()
-    #         )
-    #
-    #         # Ground Truth Correspondence
-    #         # align_gcorr = [range(55)]*len(shapes)
-    #
-    #         # Finding Correspondance
-    #         # self._nicp = nicp = NICP(icp.aligned_shapes, icp.target)
-    #         # align_gcorr = nicp.point_correspondence
-    #
-    #         # Finding Correspondence by Group
-    #         align_gcorr = None
-    #         groups = self.aam.group_corr
-    #
-    #         for g in groups:
-    #             g_align_s = []
-    #             for aligned_s in icp.aligned_shapes:
-    #                 g_align_s.append(PointCloud(aligned_s.points[g]))
-    #             gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
-    #             g_align = np.array(gnicp.point_correspondence) + g[0]
-    #             if align_gcorr is None:
-    #                 align_gcorr = g_align
-    #             else:
-    #                 align_gcorr = np.hstack((align_gcorr, g_align))
-    #
-    #         # compute non-linear transforms (tps)
-    #         for a_s, a_corr in zip(aligned_shapes, align_gcorr):
-    #             # Align shapes with reference frame
-    #             temp_as = align_t.apply(a_s)
-    #             temp_s = align_t.apply(PointCloud(icp.target.points[a_corr]))
-    #
-    #             transforms.append(tps(temp_s, temp_as))
-    #             # transforms.append(pwa(temp_s, temp_as))pes
-    #
-    #         # build dense shapes
-    #         lms_corr = []
-    #         for i, (t, a_s) in enumerate(zip(transforms, aligned_shapes)):
-    #             dense_shape = t.apply(dense_reference_shape)
-    #             kdOBJ = KDTree(dense_shape.points)
-    #             _, match = kdOBJ.query(a_s.points)
-    #             lms_corr.append(
-    #                 match
-    #             )
-    #         self._lms_corr = lms_corr
+    @property
+    def sparse_shapes(self):
+        if hasattr(self, 'sparseshapes'):
+            pass
+        else:
+            self.sparseshapes = [
+                PointCloud(
+                    s.points[:self.aam.n_landmarks]
+                ) for s in self.shapes
+            ]
+        return self.sparseshapes
+
+    def _prepare_gt_rf(self):
+        gt_image = self.image
+        # compute reference_shape and normalize images size
+        self.reference_shape, normalized_images = \
+            normalization_wrt_reference_shape(
+                [gt_image], 'PTS', None, self.aam.normalization_diagonal, True
+            )
+
+        # create pyramid
+        generators = create_pyramid(normalized_images, self.n_levels,
+                                    self.downscale, self.aam.features,
+                                    verbose=True)
+        self._feature_images = []
+        self._warpped_images = []
+        for j in range(self.n_levels):
+
+            # get feature images of current level
+            feature_images = []
+            for c, g in enumerate(generators):
+                feature_images.append(next(g))
+
+            self._feature_images.append(feature_images)
+
+            # extract potentially rescaled shapes
+            shapes = [i.landmarks['PTS'][None] for i in feature_images]
+
+            # define shapes that will be used for training
+            if j == 0:
+                original_shapes = shapes
+                train_shapes = shapes
+            else:
+                train_shapes = original_shapes
+
+            # Align Shapes Using ICP
+            icp = ICP(train_shapes, self.aam.icp.target)
+            aligned_shapes = icp.aligned_shapes
+
+            # Store Removed Transform
+            self._removed_transform = []
+            for a_s, s in zip(aligned_shapes, train_shapes):
+                ast = AlignmentSimilarity(a_s, s)
+                self._removed_transform.append(ast)
+
+            # Get Dense Shape from Masked Image
+            dense_reference_shape = self.aam.reference_frame.landmarks[
+                'source'].lms
+            self._transforms = transforms = []
+
+            align_centre = icp.target.centre_of_bounds()
+            align_t = Translation(
+                dense_reference_shape.centre_of_bounds()-align_centre
+            )
+
+            self._rf_align = Translation(
+                align_centre - dense_reference_shape.centre_of_bounds()
+            )
+
+            # Ground Truth Correspondence
+            # align_gcorr = [range(55)]*len(shapes)
+
+            # Finding Correspondance
+            # self._nicp = nicp = NICP(icp.aligned_shapes, icp.target)
+            # align_gcorr = nicp.point_correspondence
+
+            # Finding Correspondence by Group
+            align_gcorr = None
+            groups = self.aam.group_corr
+
+            for g in groups:
+                g_align_s = []
+                for aligned_s in icp.aligned_shapes:
+                    g_align_s.append(PointCloud(aligned_s.points[g]))
+                gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+                g_align = np.array(gnicp.point_correspondence) + g[0]
+                if align_gcorr is None:
+                    align_gcorr = g_align
+                else:
+                    align_gcorr = np.hstack((align_gcorr, g_align))
+
+            # compute non-linear transforms (tps)
+            for a_s, a_corr in zip(aligned_shapes, align_gcorr):
+                # Align shapes with reference frame
+                temp_as = align_t.apply(a_s)
+                temp_s = align_t.apply(PointCloud(icp.target.points[a_corr]))
+
+                transforms.append(tps(temp_s, temp_as))
+                # transforms.append(pwa(temp_s, temp_as))pes
+
+            # build dense shapes
+            lms_corr = []
+            for i, (t, a_s) in enumerate(zip(transforms, aligned_shapes)):
+                dense_shape = t.apply(dense_reference_shape)
+                kdOBJ = KDTree(dense_shape.points)
+                _, match = kdOBJ.query(a_s.points)
+                lms_corr.append(
+                    match
+                )
+            self._lms_corr = lms_corr
+
 
 
 def img_error(img_1, img_2):
