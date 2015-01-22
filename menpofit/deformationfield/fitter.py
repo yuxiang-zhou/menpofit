@@ -19,15 +19,15 @@ from scipy.spatial import KDTree
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
-    def __init__(self, model, n_landmarks=0):
+    def __init__(self, model, group_corr, n_landmarks=0):
         super(LinearWarp, self).__init__(model,
                                          DifferentiableAlignmentSimilarity)
         self.n_landmarks = n_landmarks
         self.W = np.vstack((self.similarity_model.components,
                             self.model.components))
-        # v = self.W[:, :self.n_dims*self.n_landmarks]
-        # self.pinv_v = scipy.linalg.pinv(v)
-
+        v = self.W[:, :self.n_dims*self.n_landmarks]
+        self.pinv_v = np.linalg.pinv(v)
+        self.group_corr = group_corr
         # sm_mean_l = self.models[self.model_index-1].mean()
         # sm_mean_h = self.model.mean()
         # icp = ICP([sm_mean_l], sm_mean_h)
@@ -64,24 +64,27 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
 
     def set_target(self, target):
         if target.n_points < self.target.n_points:
-            tmin, tmax = target.bounds()
-            smin, smax = self.model.mean().bounds()
-            ss = PointCloud(np.array(
-                [[smin[0], smin[1]],
-                [smin[0], smax[1]],
-                [smax[0], smin[1]],
-                [smax[0], smax[1]]]
-            ))
+            # densify target
+            icp = ICP([self.sparse_target], target)
 
-            tt = PointCloud(np.array(
-                [[tmin[0], tmin[1]],
-                [tmin[0], tmax[1]],
-                [tmax[0], tmin[1]],
-                [tmax[0], tmax[1]]])
-            )
-            t = DifferentiableAlignmentSimilarity(ss, tt)
+            # Finding Correspondence by Group
+            align_gcorr = None
+            groups = self.group_corr
 
-            target = t.apply(self.model.mean())
+            for g in groups:
+                g_align_s = []
+                for aligned_s in icp.aligned_shapes:
+                    g_align_s.append(PointCloud(aligned_s.points[g]))
+                gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+                g_align = np.array(gnicp.point_correspondence) + g[0]
+                if align_gcorr is None:
+                    align_gcorr = g_align
+                else:
+                    align_gcorr = np.hstack((align_gcorr, g_align))
+
+            target = PointCloud(target.points[align_gcorr[0]])
+            target = np.dot(np.dot(target.as_vector(), self.pinv_v), self.W)
+            target = PointCloud(np.reshape(target, (-1, self.n_dims)))
 
         OrthoPDM.set_target(self, target)
 
@@ -277,10 +280,7 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
 
             # Finding Correspondence by Group
             align_gcorr = None
-            groups = np.array([range(20),
-                               range(20, 35),
-                               range(35, 50),
-                               range(50, 55)])
+            groups = self.aam.group_corr
 
             for g in groups:
                 g_align_s = []
@@ -302,34 +302,16 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
                 transforms.append(tps(temp_s, temp_as))
                 # transforms.append(pwa(temp_s, temp_as))pes
 
-            reference_frame = self.aam.reference_frame
-
             # build dense shapes
             lms_corr = []
             for i, (t, a_s) in enumerate(zip(transforms, aligned_shapes)):
                 dense_shape = t.apply(dense_reference_shape)
-                # dense_shape = PointCloud(dense_shape.points[
-                #     self.aam.n_landmarks:])
                 kdOBJ = KDTree(dense_shape.points)
                 _, match = kdOBJ.query(a_s.points)
                 lms_corr.append(
                     match
                 )
             self._lms_corr = lms_corr
-
-            # compute transforms
-            transforms_new = []
-            for t, rt in zip(transforms, self._removed_transform):
-                ct = t.compose_before(self._rf_align).compose_before(rt)
-                transforms_new.append(ct)
-
-            # warp images to reference frame
-            warped_images = []
-            for c, (i, t) in enumerate(zip(feature_images, transforms_new)):
-
-                si = i.rescale(np.power(self.downscale, j))
-                warped_images.append(si.warp_to_mask(reference_frame.mask, t))
-            self._warpped_images.append(warped_images)
 
 
 def img_error(img_1, img_2):
@@ -404,7 +386,9 @@ class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
         self._fitters = []
         for j, (am, sm) in enumerate(zip(self.aam.appearance_models,
                                          self.aam.shape_models)):
-            transform = md_transform(sm, self.aam.n_landmarks)
+            transform = md_transform(
+                sm, self.aam.group_corr, self.aam.n_landmarks
+            )
             self._fitters.append(algorithm(am, transform, **kwargs))
 
     def _create_fitting_result(self, image, fitting_results, affine_correction,
