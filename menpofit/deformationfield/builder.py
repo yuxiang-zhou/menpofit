@@ -279,11 +279,13 @@ class DeformationFieldBuilder(AAMBuilder):
                  trilist=None, normalization_diagonal=None, n_levels=3,
                  downscale=2, scaled_shape_models=False,
                  max_shape_components=None, max_appearance_components=None,
-                 boundary=0):
+                 boundary=0, groups=[], template=0):
         super(DeformationFieldBuilder, self).__init__(
             features, transform, trilist, normalization_diagonal, n_levels,
             downscale, scaled_shape_models, max_shape_components,
             max_appearance_components, boundary)
+        self.groups = groups
+        self.template = template
 
     def build(self, images, group=None, label=None, verbose=False):
         r"""
@@ -465,16 +467,49 @@ class DeformationFieldBuilder(AAMBuilder):
                                 self.downscale, self.scaled_shape_models,
                                 self.reference_frame, self._icp,
                                 self.normalization_diagonal,
-                                self.n_landmarks)
+                                self.n_landmarks, self.group_corr)
 
     def _build_shape_model(self, shapes, max_components):
+        # Simulate inconsist annotation
+        sample_shapes = []
+        sample_groups = []
+        # full_index = range(shapes[0].n_points)
+        # for i, s in enumerate(shapes):
+        # #     # remove random landmarks for each shape
+        # #     #  - construct landmark group
+        # #     lindex = 0
+        # #     groups_temp = []
+        # #     for si in self.groups:
+        # #         groups_temp.append([full_index[lindex:si]])
+        # #         lindex = si
+        # #     groups_temp.append([full_index[lindex:s.n_points]])
+        # #
+        #     # sample_groups.append(np.array(groups_temp))
+        #     points = s.pixels.copy()
+        #     for rt in range((i % 3) + 1):
+        #         random_remove_index = np.random.randint(s.n_points)
+        #         points = np.delete(points, random_remove_index, 0)
+        # #         for gt in groups_temp:
+        # #             try:
+        # #                 gt.remove(random_remove_index)
+        # #             except ValueError:
+        # #                 pass
+        #     sample_shapes.append(PointCloud(points))
+
+        lindex = 0
+        for si in self.groups:
+            sample_groups.append(range(lindex, si))
+            lindex = si
+        sample_groups.append(range(lindex, shapes[self.template].n_points))
+
+        sample_shapes = shapes
         # Align Shapes Using ICP
-        self._icp = icp = ICP(shapes, shapes[0])
+        self._icp = icp = ICP(sample_shapes, shapes[self.template])
         aligned_shapes = icp.aligned_shapes
 
         # Store Removed Transform
         self._removed_transform = []
-        for a_s, s in zip(aligned_shapes, shapes):
+        for a_s, s in zip(aligned_shapes, sample_shapes):
             ast = AlignmentSimilarity(a_s, s)
             self._removed_transform.append(ast)
 
@@ -535,11 +570,11 @@ class DeformationFieldBuilder(AAMBuilder):
 
         # Finding Correspondence by Group
         align_gcorr = None
-        groups = np.array([range(20),
-                           range(20, 35),
-                           range(35, 50),
-                           range(50, 55)])
-
+        # groups = np.array([range(20),
+        #                    range(20, 35),
+        #                    range(35, 50),
+        #                    range(50, 55)])
+        self.group_corr = groups = np.array(sample_groups)
         for g in groups:
             g_align_s = []
             for aligned_s in icp.aligned_shapes:
@@ -566,7 +601,7 @@ class DeformationFieldBuilder(AAMBuilder):
 
         # build dense shapes
         dense_shapes = []
-        for i, (t, s) in enumerate(zip(transforms, shapes)):
+        for i, t in enumerate(transforms):
             warped_points = t.apply(dense_reference_shape)
             dense_shape = warped_points
             dense_shapes.append(dense_shape)
