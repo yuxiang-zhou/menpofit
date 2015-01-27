@@ -9,11 +9,12 @@ import numpy as np
 
 
 class SVS(Viewable):
-    def __init__(self, points, nu=0.5, kernel='rbf', gamma=0.03):
+    def __init__(self, points, tplt_edge=None, nu=0.5, kernel='rbf', gamma=0.03,
+                 tolerance=1.5, max_f=3):
         self.points = points
-        self._build(nu, kernel, gamma)
+        self._build(nu, kernel, gamma, tolerance, tplt_edge, max_f)
 
-    def _build(self, nu, kernel, gamma):
+    def _build(self, nu, kernel, gamma, tolerance, tplt_edge, max_f):
         training_points_positive = self.points
 
         margin = 10
@@ -24,28 +25,32 @@ class SVS(Viewable):
 
         # Generate negtive points
         # Build Triangle Mesh
-        tplt_tri = TriMesh(training_points_positive).trilist
+        if tplt_edge is None:
+            tplt_tri = TriMesh(training_points_positive).trilist
 
-        # Generate Edge List
-        tplt_edge = tplt_tri[:, [0, 1]]
-        tplt_edge = np.vstack((tplt_edge, tplt_tri[:, [0, 2]]))
-        tplt_edge = np.vstack((tplt_edge, tplt_tri[:, [1, 2]]))
-        tplt_edge = np.sort(tplt_edge)
+            # Generate Edge List
+            tplt_edge = tplt_tri[:, [0, 1]]
+            tplt_edge = np.vstack((tplt_edge, tplt_tri[:, [0, 2]]))
+            tplt_edge = np.vstack((tplt_edge, tplt_tri[:, [1, 2]]))
+            tplt_edge = np.sort(tplt_edge)
 
-        # Get Unique Edge
-        b = np.ascontiguousarray(tplt_edge).view(
-            np.dtype((np.void, tplt_edge.dtype.itemsize * tplt_edge.shape[1]))
-        )
-        _, idx = np.unique(b, return_index=True)
-        tplt_edge = tplt_edge[idx]
+            # Get Unique Edge
+            b = np.ascontiguousarray(tplt_edge).view(
+                np.dtype(
+                    (np.void, tplt_edge.dtype.itemsize * tplt_edge.shape[1])
+                )
+            )
+            _, idx = np.unique(b, return_index=True)
+            tplt_edge = tplt_edge[idx]
+
+
 
         # Sample Negative Points
-        tolerance = 5
         training_points_negative = []
         for i in range_x:
             for j in range_y:
                 valid = True
-                max_dist = 2*tolerance
+                max_dist = 5*tolerance
                 for e in tplt_edge:
                     min_dist = minimum_distance(
                         training_points_positive[e[0]],
@@ -57,14 +62,14 @@ class SVS(Viewable):
                         valid = False
                         break
 
-                if valid:  # and max_dist < 2*tolerance:
+                if valid and max_dist < max_f*tolerance:
                     training_points_negative.append([i, j])
 
         # Sparse Negative Samples
         training_points_negative = np.array(training_points_negative)
         m = training_points_negative.shape[0]
         training_points_negative = training_points_negative[
-            np.random.randint(m, size=m*0.2)]
+            np.random.randint(m, size=m*0.5)]
 
         self._positive_pts = training_points_positive
         self._negative_pts = training_points_negative
@@ -96,25 +101,24 @@ class SVS(Viewable):
 
         w = len(xr)
         h = len(yr)
-        img = MaskedImage.blank([h, w])
+        img = MaskedImage.blank((w, h))
         for i, x in enumerate(xr):
             for j, y in enumerate(yr):
-                img.pixels[h-j-1, i] = self.svs.decision_function([[x, y]])[0]
+                img.pixels[i, j] = self.svs.decision_function([[x, y]])[0]
 
         img.view()
 
 
 def minimum_distance(v, w, p):
 #     Return minimum distance between line segment (v,w) and point p
-    l2 = dist(v,w)  # i.e. |w-v|^2 -  avoid a sqrt
-
+    l2 = dist(v, w)  # i.e. |w-v|^2 -  avoid a sqrt
     if l2 == 0.0:
         return dist(p, v)
 
 #     Consider the line extending the segment, parameterized as v + t (w - v).
 #     We find projection of point p onto the line.
 #     It falls where t = [(p-v) . (w-v)] / |w-v|^2
-    t = np.dot(p - v, w - v) / l2
+    t = np.dot((p - v) / l2, (w - v) / l2)
     if t < 0.0:
         return dist(p, v)      # // Beyond the 'v' end of the segment
     elif t > 1.0:
