@@ -1,8 +1,10 @@
 from menpofit.aam import AAMBuilder
 from menpofit.base import create_pyramid
 from menpofit.transform import DifferentiableThinPlateSplines
-from menpofit.transform import DifferentiablePiecewiseAffine as pwa
+from menpo.transform.base import Transform
+from menpofit.deformationfield import SVS
 from menpofit.builder import normalization_wrt_reference_shape
+from menpofit.deformationfield.MatlabExecuter import MatlabExecuter
 from menpo.feature import igo
 from menpo.shape import PointCloud
 from menpo.transform.groupalign.base import MultipleAlignment
@@ -11,12 +13,30 @@ from menpo.model import PCAModel
 from menpo.visualize import print_dynamic, progress_bar_str
 from menpo.transform import Translation, AlignmentSimilarity
 from menpo.shape import TriMesh
-
 from scipy.spatial import KDTree
 
+import os
+import subprocess
 import numpy as np
+import menpo.io as mio
+import scipy.io as sio
 
 
+# Optical Flow Transform
+class OpticalFlowTransform(Transform):
+    def __init__(self, u, v):
+        super(OpticalFlowTransform, self).__init__()
+        self._u = v
+        self._v = u
+
+    def _apply(self, x, **kwargs):
+        ret = x.copy()
+        ret[:, 0] += self._u
+        ret[:, 1] += self._v
+        return ret
+
+
+# ICP --------------------------------------------
 class ICP(MultipleAlignment):
     def __init__(self, sources, target=None):
         self._test_iteration = []
@@ -273,7 +293,10 @@ def _apply_q(source, q):
     s1 = [r.dot(s) + t for s in source]
     return np.array(s1)
 
+# END ICP ----------------------------------------
 
+
+# Deformation Field using ICP, NICP --------------
 class DeformationFieldBuilder(AAMBuilder):
     def __init__(self, features=igo, transform=DifferentiableThinPlateSplines,
                  trilist=None, normalization_diagonal=None, n_levels=3,
@@ -638,6 +661,173 @@ class DeformationFieldBuilder(AAMBuilder):
         return self.reference_frame
 
 
+# Deformation Field using SVS, Optical Flow
+class OpticalFieldBuilder(DeformationFieldBuilder):
+    def __init__(self, features=igo, transform=DifferentiableThinPlateSplines,
+                 trilist=None, normalization_diagonal=None, n_levels=3,
+                 downscale=2, scaled_shape_models=False,
+                 max_shape_components=None, max_appearance_components=None,
+                 boundary=0, template=0):
+        super(OpticalFieldBuilder, self).__init__(
+            features, transform,
+            trilist, normalization_diagonal, n_levels,
+            downscale, scaled_shape_models,
+            max_shape_components, max_appearance_components,
+            boundary, template
+        )
+
+    def _build_shape_model(self, shapes, max_components):
+        # Align Shapes Using ICP
+        self._icp = icp = ICP(shapes, shapes[self.template])
+        aligned_shapes = icp.aligned_shapes
+
+        # Store Removed Transform
+        self._removed_transform = []
+        for a_s, s in zip(aligned_shapes, shapes):
+            ast = AlignmentSimilarity(a_s, s)
+            self._removed_transform.append(ast)
+
+        # Build Reference Frame from Aligned Shapes
+        bound_list = []
+        for s in aligned_shapes:
+            bmin, bmax = s.bounds()
+            bound_list.append(bmin)
+            bound_list.append(bmax)
+            bound_list.append(np.array([bmin[0], bmax[1]]))
+            bound_list.append(np.array([bmax[0], bmin[1]]))
+        bound_list = PointCloud(np.array(bound_list))
+
+        self.reference_frame = super(
+            DeformationFieldBuilder, self
+        )._build_reference_frame(bound_list)
+
+        # Set All True Pixels for Mask
+        self.reference_frame.mask.pixels = np.ones(
+            self.reference_frame.mask.pixels.shape, dtype=np.bool)
+
+        # Mask Reference Frame
+        self.n_landmarks = icp.target.points.shape[0]
+        self.reference_frame.landmarks['sparse'] = icp.target
+        self.reference_frame.constrain_mask_to_landmarks(group='sparse')
+
+        # Get Dense Shape from Masked Image
+        dense_reference_shape = PointCloud(
+            np.vstack((
+                icp.target.points,
+                self.reference_frame.mask.true_indices()
+            ))
+        )
+
+        # Set Dense Shape as Reference Landmarks
+        self.reference_frame.landmarks['source'] = dense_reference_shape
+        self._shapes = shapes
+        self._aligned_shapes = []
+
+        # Translation between reference shape and aliened shapes
+        align_centre = icp.target.centre_of_bounds()
+        align_t = Translation(
+            dense_reference_shape.centre_of_bounds()-align_centre
+        )
+
+        self._rf_align = Translation(
+            align_centre - dense_reference_shape.centre_of_bounds()
+        )
+
+        # Build Transform Using SVS
+        svs_list = []
+        for j, i in enumerate(aligned_shapes):
+            print_dynamic("  - SVS Training {} out of {}".format(
+                j+1, len(aligned_shapes))
+            )
+            # Align shapes with reference frame
+            temp_as = align_t.apply(a_s)
+            points = temp_as.points
+            # Construct tplt_edge
+            tplt_edge = None
+            lindex = 0
+            # Get Grouped Landmark Indexes
+            g_i = self._feature_images[0][j].landmarks['groups']
+            for g in g_i.items():
+                g_size = g[1].n_points
+                rindex = g_size+lindex
+                edges_range = np.array(range(lindex, rindex))
+                edges = np.hstack((
+                    edges_range[:g_size-1, None], edges_range[1:, None]
+                ))
+                tplt_edge = edges if tplt_edge is None else np.vstack((
+                    tplt_edge, edges
+                ))
+                lindex = rindex
+            # Train svs
+            svs = SVS(
+                points, tolerance=3, nu=0.5, gamma=0.02, tplt_edge=tplt_edge
+            )
+            svs_list.append(svs)
+
+        # Create Cache Directory
+        p = subprocess.Popen(
+            ['rm', '-r', '{}/.cache'.format(os.getcwd())],
+            stdout=subprocess.PIPE,
+            shell=True
+        )
+        p.wait()
+        svs_path_in = '{}/.cache/svs_training'.format(os.getcwd())
+        svs_path_out = '{}/.cache/svs_result'.format(os.getcwd())
+        if not os.path.exists(svs_path_in):
+            os.makedirs(svs_path_in)
+
+        # Store SVS Image
+        print_dynamic("  - Store SVS Images")
+        xr, yr = self.reference_frame.shape
+        for i, svs in enumerate(svs_list):
+            mio.export_image(
+                svs.svs_image(xr, yr),
+                '{}/svs_{0:04d}'.format(svs_path_in, i+1) + '.png',
+                overwrite=True
+            )
+
+        # Call Matlab to Build Flows
+        print_dynamic("  - Build Optical Flow")
+        matE = MatlabExecuter()
+        mat_code_path = '/vol/atlas/homes/yz4009/MFSF'
+        matE.cd(mat_code_path)
+        matE.run_function('runMFSFI(\'{}\', \'{}\', \'{}\', {})'.format(
+            svs_path_in, svs_path_out, 'svs_%04d.png', self.template
+        ))
+
+        # Retrieve Results
+        flow_result = []
+        for i in range(len(svs_list)):
+            mat = sio.loadmat(
+                '{}/{}/result.mat'.format(svs_path_out, i+1)
+            )
+            flow_result.append([mat['u'], mat['v']])
+
+        # Build Transforms
+        print_dynamic("  - Build Transform")
+        transforms = []
+        for [u, v] in flow_result:
+            transforms.append(OpticalFlowTransform(u, v))
+        self.transforms = transforms
+
+        # build dense shapes
+        print_dynamic("  - Build Dense Shapes")
+        dense_shapes = []
+        for i, t in enumerate(transforms):
+            warped_points = t.apply(dense_reference_shape)
+            dense_shape = warped_points
+            dense_shapes.append(dense_shape)
+
+        self._dense_shapes = dense_shapes
+
+        # build dense shape model
+        dense_shape_model = super(DeformationFieldBuilder, self). \
+            _build_shape_model(dense_shapes, max_components)
+
+        return dense_shape_model
+
+
+# Helper Functions -------------------------------
 def build_reference_frame(mean_shape):
     reference_shape = mean_shape
 

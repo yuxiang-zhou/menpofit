@@ -94,11 +94,9 @@ class SVS(Viewable):
         PointCloud(self._positive_pts).view(colour_array='w')
 
     def view(self, xr=None, yr=None):
-        if xr is None:
-            xr = self._range_x
-        if yr is None:
-            yr = self._range_y
+        self.svs_image().view()
 
+    def svs_image(self, xr=None, yr=None):
         w = len(xr)
         h = len(yr)
         img = MaskedImage.blank((w, h))
@@ -106,7 +104,10 @@ class SVS(Viewable):
             for j, y in enumerate(yr):
                 img.pixels[i, j] = self.svs.decision_function([[x, y]])[0]
 
-        img.view()
+        minp = np.min(img.pixels)
+        maxp = np.max(img.pixels)
+        img.pixels = (img.pixels - minp) / (maxp-minp)
+        return img
 
 
 def minimum_distance(v, w, p):
