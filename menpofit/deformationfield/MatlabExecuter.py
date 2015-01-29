@@ -1,4 +1,5 @@
-import subprocess, os
+import subprocess
+import os
 
 
 class MatlabExecuter(object):
