@@ -82,6 +82,9 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
                 else:
                     align_gcorr = np.hstack((align_gcorr, g_align))
 
+            if align_gcorr is None:
+                align_gcorr = [range(self.n_landmarks)]
+            
             target = PointCloud(target.points[align_gcorr[0]])
             target = np.dot(np.dot(target.as_vector(), self.pinv_v), self.W)
             target = PointCloud(np.reshape(target, (-1, self.n_dims)))

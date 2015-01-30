@@ -31,8 +31,9 @@ class OpticalFlowTransform(Transform):
 
     def _apply(self, x, **kwargs):
         ret = x.copy()
-        ret[:, 0] += self._u
-        ret[:, 1] += self._v
+        for p in ret:
+            i, j = p[0].astype(int), p[1].astype(int)
+            p += np.array([self._u[i, j], self._v[i, j]])
         return ret
 
 
@@ -733,9 +734,27 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             align_centre - dense_reference_shape.centre_of_bounds()
         )
 
+
+        # Create Cache Directory
+        home_dir = os.getcwd()
+        p = subprocess.Popen(
+            ['rm -r {}/.cache'.format(home_dir)],
+            stdout=subprocess.PIPE,
+            shell=True
+        )
+        p.wait()
+        svs_path_in = '{}/.cache/svs_training'.format(home_dir)
+        svs_path_out = '{}/.cache/svs_result'.format(home_dir)
+        if not os.path.exists(svs_path_in):
+            os.makedirs(svs_path_in)
+
         # Build Transform Using SVS
         svs_list = []
-        for j, i in enumerate(aligned_shapes):
+        processes = []
+        xr, yr = self.reference_frame.shape
+        matE = MatlabExecuter()
+        mat_code_path = '/vol/atlas/homes/yz4009/MFSF'
+        for j, a_s in enumerate(aligned_shapes):
             print_dynamic("  - SVS Training {} out of {}".format(
                 j+1, len(aligned_shapes))
             )
@@ -763,37 +782,24 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 points, tolerance=3, nu=0.5, gamma=0.02, tplt_edge=tplt_edge
             )
             svs_list.append(svs)
-
-        # Create Cache Directory
-        p = subprocess.Popen(
-            ['rm', '-r', '{}/.cache'.format(os.getcwd())],
-            stdout=subprocess.PIPE,
-            shell=True
-        )
-        p.wait()
-        svs_path_in = '{}/.cache/svs_training'.format(os.getcwd())
-        svs_path_out = '{}/.cache/svs_result'.format(os.getcwd())
-        if not os.path.exists(svs_path_in):
-            os.makedirs(svs_path_in)
-
-        # Store SVS Image
-        print_dynamic("  - Store SVS Images")
-        xr, yr = self.reference_frame.shape
-        for i, svs in enumerate(svs_list):
+            # Store SVS Image
             mio.export_image(
-                svs.svs_image(xr, yr),
-                '{}/svs_{0:04d}'.format(svs_path_in, i+1) + '.png',
+                svs.svs_image(xr=range(xr), yr=range(yr)),
+                '{}/svs_{:04d}.png'.format(svs_path_in, j+1),
                 overwrite=True
             )
+            # Call Matlab to Build Flows
+            matE.cd(mat_code_path)
+            p = matE.run_function(
+                'addpath(\'{0}/{1}\');addpath(\'{0}/{2}\');argrun(\'{3}\', \'{4}/{7}\', \'{5}\', {6}, {7}, {8})'.format(
+                    mat_code_path, 'mexfiles', 'tools',
+                    svs_path_in, svs_path_out, 'svs_%04d.png', self.template + 1, j + 1, 1
+            ))
+            processes.append(p) 
 
-        # Call Matlab to Build Flows
-        print_dynamic("  - Build Optical Flow")
-        matE = MatlabExecuter()
-        mat_code_path = '/vol/atlas/homes/yz4009/MFSF'
-        matE.cd(mat_code_path)
-        matE.run_function('runMFSFI(\'{}\', \'{}\', \'{}\', {})'.format(
-            svs_path_in, svs_path_out, 'svs_%04d.png', self.template
-        ))
+        # Wait for all flow Computing to Finish
+        for p in processes:
+            p.wait()
 
         # Retrieve Results
         flow_result = []
@@ -801,7 +807,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             mat = sio.loadmat(
                 '{}/{}/result.mat'.format(svs_path_out, i+1)
             )
-            flow_result.append([mat['u'], mat['v']])
+            flow_result.append([mat['u'][0][0], mat['v'][0][0]])
 
         # Build Transforms
         print_dynamic("  - Build Transform")
@@ -823,6 +829,9 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         # build dense shape model
         dense_shape_model = super(DeformationFieldBuilder, self). \
             _build_shape_model(dense_shapes, max_components)
+
+        # dummy
+        self.group_corr = []
 
         return dense_shape_model
 
