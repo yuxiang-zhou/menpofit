@@ -310,7 +310,8 @@ class DeformationFieldBuilder(AAMBuilder):
             max_appearance_components, boundary)
         self.template = template
 
-    def build(self, images, group=None, label=None, verbose=False):
+    def build(self, images, group=None, label=None, verbose=False,
+              target_shape=None):
         r"""
         Builds a Multilevel Active Appearance Model from a list of
         landmarked images.
@@ -403,11 +404,11 @@ class DeformationFieldBuilder(AAMBuilder):
                 print_dynamic('{}Building shape model'.format(level_str))
             if j == 0:
                 shape_model = self._build_shape_model(
-                    train_shapes, self.max_shape_components[rj])
+                    train_shapes, self.max_shape_components[rj], target_shape)
             else:
                 if self.scaled_shape_models:
                     shape_model = self._build_shape_model(
-                        train_shapes, self.max_shape_components[rj])
+                        train_shapes, self.max_shape_components[rj], target_shape)
                 else:
                     shape_model = shape_models[-1].copy()
 
@@ -492,7 +493,7 @@ class DeformationFieldBuilder(AAMBuilder):
                                 self.normalization_diagonal,
                                 self.n_landmarks, self.group_corr)
 
-    def _build_shape_model(self, shapes, max_components):
+    def _build_shape_model(self, shapes, max_components, target_shape):
         # Simulate inconsist annotation
         sample_groups = []
         g_i = self._feature_images[0][self.template].landmarks[
@@ -503,9 +504,12 @@ class DeformationFieldBuilder(AAMBuilder):
             sample_groups.append(range(lindex, lindex + g_size))
             lindex += g_size
 
-        sample_shapes = shapes
         # Align Shapes Using ICP
-        self._icp = icp = ICP(sample_shapes, shapes[self.template])
+        if target_shape is None:
+            target_shape = shapes[self.template]
+             
+        sample_shapes = shapes
+        self._icp = icp = ICP(sample_shapes, target_shape)
         aligned_shapes = icp.aligned_shapes
 
         # Store Removed Transform
@@ -532,15 +536,24 @@ class DeformationFieldBuilder(AAMBuilder):
         self.reference_frame.mask.pixels = np.ones(
             self.reference_frame.mask.pixels.shape, dtype=np.bool)
 
+        # Transforms to align reference frame
+        align_centre = icp.target.centre_of_bounds()
+        align_t = Translation(
+            self.reference_frame.centre - align_centre
+        )
+
+        self._rf_align = Translation(
+            align_centre - self.reference_frame.centre
+        )
         # Mask Reference Frame
         self.n_landmarks = icp.target.points.shape[0]
-        self.reference_frame.landmarks['sparse'] = icp.target
+        self.reference_frame.landmarks['sparse'] = align_t.apply(icp.target)
         self.reference_frame.constrain_mask_to_landmarks(group='sparse')
 
         # Get Dense Shape from Masked Image
         dense_reference_shape = PointCloud(
             np.vstack((
-                icp.target.points,
+                align_t.apply(icp.target).points,
                 self.reference_frame.mask.true_indices()
             ))
         )
@@ -553,14 +566,6 @@ class DeformationFieldBuilder(AAMBuilder):
         self._aligned_shapes = []
         transforms = []
 
-        align_centre = icp.target.centre_of_bounds()
-        align_t = Translation(
-            dense_reference_shape.centre_of_bounds()-align_centre
-        )
-
-        self._rf_align = Translation(
-            align_centre - dense_reference_shape.centre_of_bounds()
-        )
 
         # Ground Truth Correspondence
         # align_gcorr = [range(55)]*len(shapes)
@@ -677,11 +682,15 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             boundary, template
         )
 
-    def _build_shape_model(self, shapes, max_components):
+    def _build_shape_model(self, shapes, max_components, target_shape):
         # Align Shapes Using ICP
-        self._icp = icp = ICP(shapes, shapes[self.template])
-        aligned_shapes = icp.aligned_shapes
+        if target_shape is None:
+            target_shape = shapes[self.template]
+        else:
+            self.template = -1
 
+        self._icp = icp = ICP(shapes, target_shape)
+        aligned_shapes = icp.aligned_shapes
         # Store Removed Transform
         self._removed_transform = []
         for a_s, s in zip(aligned_shapes, shapes):
@@ -702,19 +711,29 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             DeformationFieldBuilder, self
         )._build_reference_frame(bound_list)
 
+        # Translation between reference shape and aliened shapes
+        align_centre = icp.target.centre_of_bounds()
+        align_t = Translation(
+            self.reference_frame.centre - align_centre
+        )
+
+        self._rf_align = Translation(
+            align_centre - self.reference_frame.centre
+        )
+
         # Set All True Pixels for Mask
         self.reference_frame.mask.pixels = np.ones(
             self.reference_frame.mask.pixels.shape, dtype=np.bool)
 
         # Mask Reference Frame
         self.n_landmarks = icp.target.points.shape[0]
-        self.reference_frame.landmarks['sparse'] = icp.target
+        self.reference_frame.landmarks['sparse'] = align_t.apply(icp.target)
         self.reference_frame.constrain_mask_to_landmarks(group='sparse')
 
         # Get Dense Shape from Masked Image
         dense_reference_shape = PointCloud(
             np.vstack((
-                icp.target.points,
+                align_t.apply(icp.target).points,
                 self.reference_frame.mask.true_indices()
             ))
         )
@@ -723,17 +742,6 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         self.reference_frame.landmarks['source'] = dense_reference_shape
         self._shapes = shapes
         self._aligned_shapes = []
-
-        # Translation between reference shape and aliened shapes
-        align_centre = icp.target.centre_of_bounds()
-        align_t = Translation(
-            dense_reference_shape.centre_of_bounds()-align_centre
-        )
-
-        self._rf_align = Translation(
-            align_centre - dense_reference_shape.centre_of_bounds()
-        )
-
 
         # Create Cache Directory
         home_dir = os.getcwd()
@@ -754,9 +762,9 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         xr, yr = self.reference_frame.shape
         matE = MatlabExecuter()
         mat_code_path = '/vol/atlas/homes/yz4009/MFSF'
-        for j, a_s in enumerate(aligned_shapes):
+        for j, a_s in enumerate([target_shape] + aligned_shapes.tolist()):
             print_dynamic("  - SVS Training {} out of {}".format(
-                j+1, len(aligned_shapes))
+                j, len(aligned_shapes) + 1)
             )
             # Align shapes with reference frame
             temp_as = align_t.apply(a_s)
@@ -765,7 +773,10 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             tplt_edge = None
             lindex = 0
             # Get Grouped Landmark Indexes
-            g_i = self._feature_images[0][j].landmarks['groups']
+            if j > 0:
+                g_i = self._feature_images[0][j-1].landmarks['groups']
+            else:
+                g_i = self._feature_images[0][j].landmarks['groups']
             for g in g_i.items():
                 g_size = g[1].n_points
                 rindex = g_size+lindex
@@ -785,7 +796,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             # Store SVS Image
             mio.export_image(
                 svs.svs_image(xr=range(xr), yr=range(yr)),
-                '{}/svs_{:04d}.png'.format(svs_path_in, j+1),
+                '{}/svs_{:04d}.png'.format(svs_path_in, j),
                 overwrite=True
             )
             # Call Matlab to Build Flows
@@ -793,9 +804,10 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             p = matE.run_function(
                 'addpath(\'{0}/{1}\');addpath(\'{0}/{2}\');argrun(\'{3}\', \'{4}/{7}\', \'{5}\', {6}, {7}, {8})'.format(
                     mat_code_path, 'mexfiles', 'tools',
-                    svs_path_in, svs_path_out, 'svs_%04d.png', self.template + 1, j + 1, 1
+                    svs_path_in, svs_path_out, 'svs_%04d.png', self.template + 1, j, 1
             ))
-            processes.append(p) 
+            processes.append(p)
+            p.wait() 
 
         # Wait for all flow Computing to Finish
         for p in processes:
@@ -803,7 +815,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
 
         # Retrieve Results
         flow_result = []
-        for i in range(len(svs_list)):
+        for i in range(len(shapes)):
             mat = sio.loadmat(
                 '{}/{}/result.mat'.format(svs_path_out, i+1)
             )

@@ -149,7 +149,8 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         cr = ICP([shape], self._gt_shape).point_correspondence
 
         return compute_error(
-            shape, PointCloud(self._gt_shape.points[cr[0]])
+            # shape, PointCloud(self._gt_shape.points[cr[0]])
+            shape, self._gt_shape
         )
 
     def initial_error(self, error_type='me_norm'):
@@ -160,7 +161,8 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         cr = ICP([shape], self._gt_shape).point_correspondence
 
         return compute_error(
-            shape, PointCloud(self._gt_shape.points[cr[0]])
+            # shape, PointCloud(self._gt_shape.points[cr[0]])
+            shape, self._gt_shape
         )
 
     @property
@@ -198,7 +200,8 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
 
         return [compute_error(
             PointCloud(s.points[:self.aam.n_landmarks]),
-            PointCloud(self._gt_shape.points[cr])
+            # PointCloud(self._gt_shape.points[cr])
+            self._gt_shape
         ) for (s, cr) in zip(self.shapes, corr)]
 
     def appearance_errors(self):
