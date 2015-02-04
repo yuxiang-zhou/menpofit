@@ -566,20 +566,8 @@ class DeformationFieldBuilder(AAMBuilder):
         self._aligned_shapes = []
         transforms = []
 
-
-        # Ground Truth Correspondence
-        # align_gcorr = [range(55)]*len(shapes)
-
-        # Finding Correspondance
-        # self._nicp = nicp = NICP(icp.aligned_shapes, icp.target)
-        # align_gcorr = nicp.point_correspondence
-
-        # Finding Correspondence by Group
+        # group correspondence
         align_gcorr = None
-        # groups = np.array([range(20),
-        #                    range(20, 35),
-        #                    range(35, 50),
-        #                    range(50, 55)])
         self.group_corr = groups = np.array(sample_groups)
         for g in groups:
             g_align_s = []
@@ -674,6 +662,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                  downscale=2, scaled_shape_models=False,
                  max_shape_components=None, max_appearance_components=None,
                  boundary=0, template=0):
+        self._svs_path = None
         super(OpticalFieldBuilder, self).__init__(
             features, transform,
             trilist, normalization_diagonal, n_levels,
@@ -682,7 +671,26 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             boundary, template
         )
 
+    def build(self, images, group=None, label=None, verbose=False,
+              target_shape=None, svs_path=None):
+
+        self._svs_path = svs_path
+
+        super(OpticalFieldBuilder, self).build(
+            images, group, label, verbose, target_shape
+        )
+
     def _build_shape_model(self, shapes, max_components, target_shape):
+        # Simulate inconsist annotation
+        sample_groups = []
+        g_i = self._feature_images[0][self.template].landmarks[
+            'groups'].items()
+        lindex = 0
+        for i in g_i:
+            g_size = i[1].n_points
+            sample_groups.append(range(lindex, lindex + g_size))
+            lindex += g_size
+
         # Align Shapes Using ICP
         if target_shape is None:
             target_shape = shapes[self.template]
@@ -753,79 +761,138 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         p.wait()
         svs_path_in = '{}/.cache/svs_training'.format(home_dir)
         svs_path_out = '{}/.cache/svs_result'.format(home_dir)
+        matE = MatlabExecuter()
+        mat_code_path = '/vol/atlas/homes/yz4009/gitdev/mfsfbb'
         if not os.path.exists(svs_path_in):
             os.makedirs(svs_path_in)
 
-        # Build Transform Using SVS
-        svs_list = []
-        processes = []
-        xr, yr = self.reference_frame.shape
-        matE = MatlabExecuter()
-        mat_code_path = '/vol/atlas/homes/yz4009/MFSF'
-        for j, a_s in enumerate([target_shape] + aligned_shapes.tolist()):
-            print_dynamic("  - SVS Training {} out of {}".format(
-                j, len(aligned_shapes) + 1)
-            )
+        # Skip building svs is path specified
+        if self._svs_path is None:
+            # Build Transform Using SVS
+            svs_list = []
+            xr, yr = self.reference_frame.shape
+            for j, a_s in enumerate([target_shape] + aligned_shapes.tolist()):
+                print_dynamic("  - SVS Training {} out of {}".format(
+                    j, len(aligned_shapes) + 1)
+                )
+                # Align shapes with reference frame
+                temp_as = align_t.apply(a_s)
+                points = temp_as.points
+                # Construct tplt_edge
+                tplt_edge = None
+                lindex = 0
+                # Get Grouped Landmark Indexes
+                if j > 0:
+                    g_i = self._feature_images[0][j-1].landmarks['groups']
+                else:
+                    g_i = self._feature_images[0][j].landmarks['groups']
+                for g in g_i.items():
+                    g_size = g[1].n_points
+                    rindex = g_size+lindex
+                    edges_range = np.array(range(lindex, rindex))
+                    edges = np.hstack((
+                        edges_range[:g_size-1, None], edges_range[1:, None]
+                    ))
+                    tplt_edge = edges if tplt_edge is None else np.vstack((
+                        tplt_edge, edges
+                    ))
+                    lindex = rindex
+                # Train svs
+                svs = SVS(
+                    points, tolerance=3, nu=0.5, gamma=0.02, tplt_edge=tplt_edge
+                )
+                svs_list.append(svs)
+                # Store SVS Image
+                mio.export_image(
+                    svs.svs_image(xr=range(xr), yr=range(yr)),
+                    '{}/svs_{:04d}.png'.format(svs_path_in, j),
+                    overwrite=True
+                )
+        else:
+            svs_path_in = self._svs_path
+            svs_path_out = '{}/.cache/svs_result_custom'.format(home_dir)
+
+        # Build basis
+        # group correspondence
+        align_gcorr = None
+        groups = np.array(sample_groups)
+        tps_t = []
+        for g in groups:
+            g_align_s = []
+            for aligned_s in icp.aligned_shapes:
+                g_align_s.append(PointCloud(aligned_s.points[g]))
+            gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+            g_align = np.array(gnicp.point_correspondence) + g[0]
+            if align_gcorr is None:
+                align_gcorr = g_align
+            else:
+                align_gcorr = np.hstack((align_gcorr, g_align))
+
+        # compute non-linear transforms (tps)
+        for a_s, a_corr in zip(aligned_shapes, align_gcorr):
             # Align shapes with reference frame
             temp_as = align_t.apply(a_s)
-            points = temp_as.points
-            # Construct tplt_edge
-            tplt_edge = None
-            lindex = 0
-            # Get Grouped Landmark Indexes
-            if j > 0:
-                g_i = self._feature_images[0][j-1].landmarks['groups']
-            else:
-                g_i = self._feature_images[0][j].landmarks['groups']
-            for g in g_i.items():
-                g_size = g[1].n_points
-                rindex = g_size+lindex
-                edges_range = np.array(range(lindex, rindex))
-                edges = np.hstack((
-                    edges_range[:g_size-1, None], edges_range[1:, None]
-                ))
-                tplt_edge = edges if tplt_edge is None else np.vstack((
-                    tplt_edge, edges
-                ))
-                lindex = rindex
-            # Train svs
-            svs = SVS(
-                points, tolerance=3, nu=0.5, gamma=0.02, tplt_edge=tplt_edge
-            )
-            svs_list.append(svs)
-            # Store SVS Image
-            mio.export_image(
-                svs.svs_image(xr=range(xr), yr=range(yr)),
-                '{}/svs_{:04d}.png'.format(svs_path_in, j),
-                overwrite=True
-            )
-            # Call Matlab to Build Flows
-            matE.cd(mat_code_path)
-            p = matE.run_function(
-                'addpath(\'{0}/{1}\');addpath(\'{0}/{2}\');argrun(\'{3}\', \'{4}/{7}\', \'{5}\', {6}, {7}, {8})'.format(
-                    mat_code_path, 'mexfiles', 'tools',
-                    svs_path_in, svs_path_out, 'svs_%04d.png', self.template + 1, j, 1
-            ))
-            processes.append(p)
-            p.wait() 
+            temp_s = align_t.apply(PointCloud(icp.target.points[a_corr]))
 
-        # Wait for all flow Computing to Finish
-        for p in processes:
-            p.wait()
+            self._aligned_shapes.append(temp_as)
+            tps_t.append(self.transform(temp_s, temp_as))
+            # transforms.append(pwa(temp_s, temp_as))
+
+        # build dense shapes
+        dense_shapes = []
+        for i, t in enumerate(tps_t):
+            warped_points = t.apply(dense_reference_shape)
+            dense_shape = warped_points
+            dense_shapes.append(dense_shape)
+
+        # build dense shape model
+        uvs = np.array([ds.points.flatten() - dense_reference_shape.points.flatten()
+                        for ds in dense_shapes])
+        nFrame = len(dense_shapes)
+        nPoints = dense_shapes[0].n_points
+        W = np.zeros((2 * nFrame, nPoints))
+        W[0:2*nFrame:2, :] = uvs[:, 0:2*nPoints:2]
+        W[1:2*nFrame:2, :] = uvs[:, 1:2*nPoints:2]
+        S = W.dot(W.T)
+        U, var, _ = np.linalg.svd(S)
+        csum = np.cumsum(var)
+        csum = 100 * csum / csum[-1]
+        accept_rate = 90
+        rank = np.argmin(np.abs(csum - accept_rate))
+        Q = U[:, :rank]
+        basis = np.vstack((Q[0::2, :], Q[1::2, :]))
+
+        # construct basis
+        sio.savemat('{}/{}'.format(svs_path_in, 'bas.mat'), {
+            'bas': basis
+        })
+
+
+        # Call Matlab to Build Flows
+        matE.cd(mat_code_path)
+        p = matE.run_function(
+            'addpath(\'{0}/{1}\');addpath(\'{0}/{2}\');build_flow(\'{3}\', '
+            '\'{4}\', \'{5}\', {6}, {7}, {8}, \'{3}/{9}\')'.format(
+                mat_code_path, 'cudafiles', 'tools',
+                svs_path_in, svs_path_out, 'svs_%04d.png', self.template + 1,
+                1, len(shapes), 'bas.mat'
+            )
+        )
+        p.wait()
+
 
         # Retrieve Results
-        flow_result = []
-        for i in range(len(shapes)):
-            mat = sio.loadmat(
-                '{}/{}/result.mat'.format(svs_path_out, i+1)
-            )
-            flow_result.append([mat['u'][0][0], mat['v'][0][0]])
+        mat = sio.loadmat(
+            '{}/result.mat'.format(svs_path_out)
+        )
+
+        _u, _v = mat['u'], mat['v']
 
         # Build Transforms
         print_dynamic("  - Build Transform")
         transforms = []
-        for [u, v] in flow_result:
-            transforms.append(OpticalFlowTransform(u, v))
+        for i in range(nFrame):
+            transforms.append(OpticalFlowTransform(_u[:, :, i], _v[:, :, i]))
         self.transforms = transforms
 
         # build dense shapes
