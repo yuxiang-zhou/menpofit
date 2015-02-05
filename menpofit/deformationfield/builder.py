@@ -483,7 +483,6 @@ class DeformationFieldBuilder(AAMBuilder):
             The trained DeformationField object.
         """
         from .base import DeformationField
-
         return DeformationField(shape_models, appearance_models,
                                 n_training_images,
                                 DifferentiableThinPlateSplines,
@@ -657,6 +656,7 @@ class DeformationFieldBuilder(AAMBuilder):
 
 # Deformation Field using SVS, Optical Flow
 class OpticalFieldBuilder(DeformationFieldBuilder):
+
     def __init__(self, features=igo, transform=DifferentiableThinPlateSplines,
                  trilist=None, normalization_diagonal=None, n_levels=3,
                  downscale=2, scaled_shape_models=False,
@@ -676,7 +676,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
 
         self._svs_path = svs_path
 
-        super(OpticalFieldBuilder, self).build(
+        return super(OpticalFieldBuilder, self).build(
             images, group, label, verbose, target_shape
         )
 
@@ -715,10 +715,13 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             bound_list.append(np.array([bmax[0], bmin[1]]))
         bound_list = PointCloud(np.array(bound_list))
 
-        self.reference_frame = super(
-            DeformationFieldBuilder, self
-        )._build_reference_frame(bound_list)
-
+        if self._svs_path is None:
+            self.reference_frame = super(
+                DeformationFieldBuilder, self
+            )._build_reference_frame(bound_list)
+        else:
+            from menpo.image import MaskedImage
+            self.reference_frame = MaskedImage.blank((100, 72))
         # Translation between reference shape and aliened shapes
         align_centre = icp.target.centre_of_bounds()
         align_t = Translation(
@@ -736,18 +739,15 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         # Mask Reference Frame
         self.n_landmarks = icp.target.points.shape[0]
         self.reference_frame.landmarks['sparse'] = align_t.apply(icp.target)
-        self.reference_frame.constrain_mask_to_landmarks(group='sparse')
+        # self.reference_frame.constrain_mask_to_landmarks(group='sparse')
 
         # Get Dense Shape from Masked Image
         dense_reference_shape = PointCloud(
-            np.vstack((
-                align_t.apply(icp.target).points,
-                self.reference_frame.mask.true_indices()
-            ))
+            self.reference_frame.mask.true_indices()
         )
 
         # Set Dense Shape as Reference Landmarks
-        self.reference_frame.landmarks['source'] = dense_reference_shape
+        # self.reference_frame.landmarks['source'] = dense_reference_shape
         self._shapes = shapes
         self._aligned_shapes = []
 
@@ -850,21 +850,35 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                         for ds in dense_shapes])
         nFrame = len(dense_shapes)
         nPoints = dense_shapes[0].n_points
+        h, w = self.reference_frame.shape
         W = np.zeros((2 * nFrame, nPoints))
-        W[0:2*nFrame:2, :] = uvs[:, 0:2*nPoints:2]
-        W[1:2*nFrame:2, :] = uvs[:, 1:2*nPoints:2]
+        v = uvs[:, 0:2*nPoints:2]
+        u = uvs[:, 1:2*nPoints:2]
+
+        u = np.transpose(np.reshape(u.T, (w, h, nFrame)), [1, 0, 2])
+        v = np.transpose(np.reshape(v.T, (w, h, nFrame)), [1, 0, 2])
+
+        W[0:2*nFrame:2, :] = np.reshape(u, (w*h, nFrame)).T
+        W[1:2*nFrame:2, :] = np.reshape(v, (w*h, nFrame)).T
+
         S = W.dot(W.T)
         U, var, _ = np.linalg.svd(S)
         csum = np.cumsum(var)
         csum = 100 * csum / csum[-1]
-        accept_rate = 90
-        rank = np.argmin(np.abs(csum - accept_rate))
-        Q = U[:, :rank]
-        basis = np.vstack((Q[0::2, :], Q[1::2, :]))
+        accept_rate = 99.9
+        # rank = np.argmin(np.abs(csum - accept_rate))
+        Q = U[:, :]
+        basis = np.vstack((Q[1::2, :], Q[0::2, :]))
 
         # construct basis
         sio.savemat('{}/{}'.format(svs_path_in, 'bas.mat'), {
-            'bas': basis
+            'bas': basis,
+            'tps_u': W[0:2*nFrame:2, :],
+            'tps_v': W[1:2*nFrame:2, :],
+            'ou': uvs[:, 1:2*nPoints:2],
+            'ov': uvs[:, 0:2*nPoints:2],
+            'tu': u,
+            'tv': v
         })
 
 
@@ -874,8 +888,8 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             'addpath(\'{0}/{1}\');addpath(\'{0}/{2}\');build_flow(\'{3}\', '
             '\'{4}\', \'{5}\', {6}, {7}, {8}, \'{3}/{9}\')'.format(
                 mat_code_path, 'cudafiles', 'tools',
-                svs_path_in, svs_path_out, 'svs_%04d.png', self.template + 1,
-                1, len(shapes), 'bas.mat'
+                svs_path_in, svs_path_out, 'svs_%04d.png', self.template+1,
+                1, nFrame, 'bas.mat'
             )
         )
         p.wait()
@@ -892,11 +906,25 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         print_dynamic("  - Build Transform")
         transforms = []
         for i in range(nFrame):
-            transforms.append(OpticalFlowTransform(_u[:, :, i], _v[:, :, i]))
+            transforms.append(
+                OpticalFlowTransform(_u[:, :, i], _v[:, :, i])
+            )
         self.transforms = transforms
 
         # build dense shapes
         print_dynamic("  - Build Dense Shapes")
+        self.reference_frame.constrain_mask_to_landmarks(group='sparse')
+
+        # Get Dense Shape from Masked Image
+        dense_reference_shape = PointCloud(
+            np.vstack((
+                align_t.apply(icp.target).points,
+                self.reference_frame.mask.true_indices()
+            ))
+        )
+
+        # Set Dense Shape as Reference Landmarks
+        self.reference_frame.landmarks['source'] = dense_reference_shape
         dense_shapes = []
         for i, t in enumerate(transforms):
             warped_points = t.apply(dense_reference_shape)
