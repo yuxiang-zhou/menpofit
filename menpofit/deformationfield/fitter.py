@@ -336,7 +336,6 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
             self._lms_corr = lms_corr
 
 
-
 def img_error(img_1, img_2):
     t_pixels = img_1.pixels
     w_pixels = img_2.pixels

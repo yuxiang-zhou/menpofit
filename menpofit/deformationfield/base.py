@@ -1,6 +1,7 @@
 from menpofit.aam import AAM
 from menpo.shape import PointCloud
 from menpofit.aam.builder import build_reference_frame
+from menpofit.transform import DifferentiablePiecewiseAffine as pwa
 
 import numpy as np
 
@@ -35,31 +36,51 @@ class DeformationField(AAM):
         out_splitted[0] = self._str_title
         return '\n'.join(out_splitted)
 
+    # def _instance(self, level, shape_instance, appearance_instance):
+    #     template = self.appearance_models[level].mean()
+    #     landmarks = template.landmarks['sparse'].lms
+    #
+    #     # use spare shape
+    #     sparse_rate = 8
+    #     w, h = template.shape
+    #     sparse_index = []
+    #     for i in range(w / sparse_rate):
+    #         for j in range(h / sparse_rate):
+    #             index = i*sparse_rate*h+j*sparse_rate
+    #             if index < landmarks.n_points:
+    #                 sparse_index.append(index)
+    #
+    #     reference_frame = self._build_reference_frame(
+    #         PointCloud(shape_instance.points[sparse_index])
+    #     )
+    #
+    #     source = reference_frame.landmarks['source'].lms
+    #
+    #     target = PointCloud(landmarks.points[sparse_index])
+    #
+    #     transform = self.transform(source, target)
+    #
+    #     return appearance_instance
+
     def _instance(self, level, shape_instance, appearance_instance):
         template = self.appearance_models[level].mean()
-        landmarks = template.landmarks['source'].lms
+        landmarks = PointCloud(
+            template.landmarks['source'].lms.points[:self.n_landmarks]
+        )
 
-        # # use spare shape
-        # sparse_rate = 8
-        # w, h = template.shape
-        # sparse_index = []
-        # for i in range(w / sparse_rate):
-        #     for j in range(h / sparse_rate):
-        #         index = i*sparse_rate*h+j*sparse_rate
-        #         if index < landmarks.n_points:
-        #             sparse_index.append(index)
-        #
-        # reference_frame = self._build_reference_frame(
-        #     PointCloud(shape_instance.points[sparse_index])
-        # )
-        #
-        # source = reference_frame.landmarks['source'].lms
-        #
-        # target = PointCloud(landmarks.points[sparse_index])
-        #
-        # transform = self.transform(source, target)
+        appearance_instance.landmarks['source'] = landmarks
 
-        return appearance_instance
+        reference_frame = self._build_reference_frame(
+            PointCloud(shape_instance.points[:self.n_landmarks])
+        )
+
+        transform = pwa(
+            reference_frame.landmarks['source'].lms,
+            landmarks
+        )
+
+        return appearance_instance.warp_to_mask(reference_frame.mask,
+                                                transform, warp_landmarks=True)
 
     def _build_reference_frame(self, reference_shape):
 

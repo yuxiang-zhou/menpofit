@@ -661,7 +661,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                  trilist=None, normalization_diagonal=None, n_levels=3,
                  downscale=2, scaled_shape_models=False,
                  max_shape_components=None, max_appearance_components=None,
-                 boundary=0, template=0):
+                 boundary=10, template=0):
         self._svs_path = None
         super(OpticalFieldBuilder, self).__init__(
             features, transform,
@@ -721,7 +721,11 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             )._build_reference_frame(bound_list)
         else:
             from menpo.image import MaskedImage
-            self.reference_frame = MaskedImage.blank((100, 72))
+            svs_img = mio.import_image(
+                '{}/{}'.format(self._svs_path, 'svs_0000.png')
+            )
+            h, w = svs_img.shape
+            self.reference_frame = MaskedImage.blank((h, w))
         # Translation between reference shape and aliened shapes
         align_centre = icp.target.centre_of_bounds()
         align_t = Translation(
@@ -799,7 +803,8 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     lindex = rindex
                 # Train svs
                 svs = SVS(
-                    points, tolerance=3, nu=0.5, gamma=0.02, tplt_edge=tplt_edge
+                    points, tplt_edge=tplt_edge, tolerance=0.5, nu=0.4,
+                    gamma=0.9, max_f=6
                 )
                 svs_list.append(svs)
                 # Store SVS Image

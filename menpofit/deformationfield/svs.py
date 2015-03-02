@@ -10,23 +10,22 @@ import numpy as np
 
 class SVS(Viewable):
     def __init__(self, points, tplt_edge=None, nu=0.5, kernel='rbf', gamma=0.03,
-                 tolerance=1.5, max_f=3):
+                 tolerance=0.5, max_f=5):
         self.points = points
         self._build(nu, kernel, gamma, tolerance, tplt_edge, max_f)
 
     def _build(self, nu, kernel, gamma, tolerance, tplt_edge, max_f):
-        training_points_positive = self.points
 
         margin = 10
-        min_p = np.min(training_points_positive, axis=0).astype('int')
-        max_p = np.max(training_points_positive, axis=0).astype('int')
+        min_p = np.min(self.points, axis=0).astype('int')
+        max_p = np.max(self.points, axis=0).astype('int')
         self._range_x = range_x = range(min_p[0]-margin, max_p[0]+margin)
         self._range_y = range_y = range(min_p[1]-margin, max_p[1]+margin)
 
         # Generate negtive points
         # Build Triangle Mesh
         if tplt_edge is None:
-            tplt_tri = TriMesh(training_points_positive).trilist
+            tplt_tri = TriMesh(self.points).trilist
 
             # Generate Edge List
             tplt_edge = tplt_tri[:, [0, 1]]
@@ -43,33 +42,36 @@ class SVS(Viewable):
             _, idx = np.unique(b, return_index=True)
             tplt_edge = tplt_edge[idx]
 
-
-
-        # Sample Negative Points
+        # Sample Points
         training_points_negative = []
+        training_points_positive = []
         for i in range_x:
             for j in range_y:
                 valid = True
-                max_dist = 5*tolerance
+                max_dist = 100*tolerance
                 for e in tplt_edge:
                     min_dist = minimum_distance(
-                        training_points_positive[e[0]],
-                        training_points_positive[e[1]],
+                        self.points[e[0]],
+                        self.points[e[1]],
                         np.array([i, j]))
                     if min_dist < max_dist:
                         max_dist = min_dist
                     if min_dist < tolerance:
                         valid = False
-                        break
+                        training_points_positive.append([i, j])
 
                 if valid and max_dist < max_f*tolerance:
                     training_points_negative.append([i, j])
 
-        # Sparse Negative Samples
         training_points_negative = np.array(training_points_negative)
-        m = training_points_negative.shape[0]
-        training_points_negative = training_points_negative[
-            np.random.randint(m, size=m*0.5)]
+        training_points_positive = np.vstack((
+            np.array(training_points_positive), self.points
+        ))
+
+        # Sparse Negative Samples
+        # m = training_points_negative.shape[0]
+        # training_points_negative = training_points_negative[
+        #     np.random.randint(m, size=m*0.5)]
 
         self._positive_pts = training_points_positive
         self._negative_pts = training_points_negative
@@ -90,8 +92,8 @@ class SVS(Viewable):
         self.svs = svs
 
     def view_samples(self):
-        PointCloud(self._negative_pts).view()
-        PointCloud(self._positive_pts).view(colour_array='w')
+        PointCloud(self._negative_pts).view(marker_face_colour='b')
+        PointCloud(self._positive_pts).view(marker_face_colour='w')
 
     def view(self, xr=None, yr=None):
         self.svs_image().view()
