@@ -404,11 +404,15 @@ class DeformationFieldBuilder(AAMBuilder):
                 print_dynamic('{}Building shape model'.format(level_str))
             if j == 0:
                 shape_model = self._build_shape_model(
-                    train_shapes, self.max_shape_components[rj], target_shape)
+                    train_shapes, self.max_shape_components[rj],
+                    target_shape
+                )
             else:
                 if self.scaled_shape_models:
                     shape_model = self._build_shape_model(
-                        train_shapes, self.max_shape_components[rj], target_shape)
+                        train_shapes, self.max_shape_components[rj],
+                        target_shape
+                    )
                 else:
                     shape_model = shape_models[-1].copy()
 
@@ -817,77 +821,78 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             svs_path_in = self._svs_path
             svs_path_out = '{}/.cache/svs_result_custom'.format(home_dir)
 
-        # Build basis
-        # group correspondence
-        align_gcorr = None
-        groups = np.array(sample_groups)
-        tps_t = []
-        for g in groups:
-            g_align_s = []
-            for aligned_s in icp.aligned_shapes:
-                g_align_s.append(PointCloud(aligned_s.points[g]))
-            gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
-            g_align = np.array(gnicp.point_correspondence) + g[0]
-            if align_gcorr is None:
-                align_gcorr = g_align
-            else:
-                align_gcorr = np.hstack((align_gcorr, g_align))
+        nFrame = len(icp.aligned_shapes)
+        if self._svs_path is None:
+            # Build basis
+            # group correspondence
+            align_gcorr = None
+            groups = np.array(sample_groups)
+            tps_t = []
+            for g in groups:
+                g_align_s = []
+                for aligned_s in icp.aligned_shapes:
+                    g_align_s.append(PointCloud(aligned_s.points[g]))
+                gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+                g_align = np.array(gnicp.point_correspondence) + g[0]
+                if align_gcorr is None:
+                    align_gcorr = g_align
+                else:
+                    align_gcorr = np.hstack((align_gcorr, g_align))
 
-        # compute non-linear transforms (tps)
-        for a_s, a_corr in zip(aligned_shapes, align_gcorr):
-            # Align shapes with reference frame
-            temp_as = align_t.apply(a_s)
-            temp_s = align_t.apply(PointCloud(icp.target.points[a_corr]))
+            # compute non-linear transforms (tps)
+            for a_s, a_corr in zip(aligned_shapes, align_gcorr):
+                # Align shapes with reference frame
+                temp_as = align_t.apply(a_s)
+                temp_s = align_t.apply(PointCloud(icp.target.points[a_corr]))
 
-            self._aligned_shapes.append(temp_as)
-            tps_t.append(self.transform(temp_s, temp_as))
-            # transforms.append(pwa(temp_s, temp_as))
+                self._aligned_shapes.append(temp_as)
+                tps_t.append(self.transform(temp_s, temp_as))
+                # transforms.append(pwa(temp_s, temp_as))
 
-        # build dense shapes
-        dense_shapes = []
-        for i, t in enumerate(tps_t):
-            warped_points = t.apply(dense_reference_shape)
-            dense_shape = warped_points
-            dense_shapes.append(dense_shape)
+            # build dense shapes
+            dense_shapes = []
+            for i, t in enumerate(tps_t):
+                warped_points = t.apply(dense_reference_shape)
+                dense_shape = warped_points
+                dense_shapes.append(dense_shape)
 
-        # build dense shape model
-        uvs = np.array([ds.points.flatten() - dense_reference_shape.points.flatten()
-                        for ds in dense_shapes])
-        nFrame = len(dense_shapes)
-        nPoints = dense_shapes[0].n_points
-        h, w = self.reference_frame.shape
-        W = np.zeros((2 * nFrame, nPoints))
-        v = uvs[:, 0:2*nPoints:2]
-        u = uvs[:, 1:2*nPoints:2]
+            # build dense shape model
+            uvs = np.array([ds.points.flatten() - dense_reference_shape.points.flatten()
+                            for ds in dense_shapes])
+            nPoints = dense_shapes[0].n_points
+            h, w = self.reference_frame.shape
+            W = np.zeros((2 * nFrame, nPoints))
+            v = uvs[:, 0:2*nPoints:2]
+            u = uvs[:, 1:2*nPoints:2]
 
-        u = np.transpose(np.reshape(u.T, (w, h, nFrame)), [1, 0, 2])
-        v = np.transpose(np.reshape(v.T, (w, h, nFrame)), [1, 0, 2])
+            u = np.transpose(np.reshape(u.T, (w, h, nFrame)), [1, 0, 2])
+            v = np.transpose(np.reshape(v.T, (w, h, nFrame)), [1, 0, 2])
 
-        W[0:2*nFrame:2, :] = np.reshape(u, (w*h, nFrame)).T
-        W[1:2*nFrame:2, :] = np.reshape(v, (w*h, nFrame)).T
+            W[0:2*nFrame:2, :] = np.reshape(u, (w*h, nFrame)).T
+            W[1:2*nFrame:2, :] = np.reshape(v, (w*h, nFrame)).T
 
-        S = W.dot(W.T)
-        U, var, _ = np.linalg.svd(S)
-        csum = np.cumsum(var)
-        csum = 100 * csum / csum[-1]
-        accept_rate = 99.9
-        # rank = np.argmin(np.abs(csum - accept_rate))
-        Q = U[:, :]
-        basis = np.vstack((Q[1::2, :], Q[0::2, :]))
+            S = W.dot(W.T)
+            U, var, _ = np.linalg.svd(S)
+            csum = np.cumsum(var)
+            csum = 100 * csum / csum[-1]
+            accept_rate = 99.9
+            # rank = np.argmin(np.abs(csum - accept_rate))
+            Q = U[:, :]
+            basis = np.vstack((Q[1::2, :], Q[0::2, :]))
 
-        # construct basis
-        sio.savemat('{}/{}'.format(svs_path_in, 'bas.mat'), {
-            'bas': basis,
-            'tps_u': W[0:2*nFrame:2, :],
-            'tps_v': W[1:2*nFrame:2, :],
-            'ou': uvs[:, 1:2*nPoints:2],
-            'ov': uvs[:, 0:2*nPoints:2],
-            'tu': u,
-            'tv': v
-        })
-
+            # construct basis
+            sio.savemat('{}/{}'.format(svs_path_in, 'bas.mat'), {
+                'bas': basis,
+                'tps_u': W[0:2*nFrame:2, :],
+                'tps_v': W[1:2*nFrame:2, :],
+                'ou': uvs[:, 1:2*nPoints:2],
+                'ov': uvs[:, 0:2*nPoints:2],
+                'tu': u,
+                'tv': v
+            })
 
         # Call Matlab to Build Flows
+        print_dynamic('Building Shape Flow')
         matE.cd(mat_code_path)
         p = matE.run_function(
             'addpath(\'{0}/{1}\');addpath(\'{0}/{2}\');build_flow(\'{3}\', '
