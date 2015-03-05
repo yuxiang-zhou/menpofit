@@ -794,17 +794,24 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     g_i = self._feature_images[0][j-1].landmarks['groups']
                 else:
                     g_i = self._feature_images[0][j].landmarks['groups']
+
+                edge_g = []
+                edge_ig = []
                 for g in g_i.items():
                     g_size = g[1].n_points
                     rindex = g_size+lindex
                     edges_range = np.array(range(lindex, rindex))
+                    edge_ig.append(edges_range)
                     edges = np.hstack((
                         edges_range[:g_size-1, None], edges_range[1:, None]
                     ))
+                    edge_g.append(edges)
                     tplt_edge = edges if tplt_edge is None else np.vstack((
                         tplt_edge, edges
                     ))
                     lindex = rindex
+
+                tplt_edge = np.concatenate(edge_g)
                 # Train svs
                 svs = SVS(
                     points, tplt_edge=tplt_edge, tolerance=0.5, nu=0.4,
@@ -817,6 +824,33 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     '{}/svs_{:04d}.png'.format(svs_path_in, j),
                     overwrite=True
                 )
+
+                # Train Group SVS
+                for ii, g in enumerate(edge_ig):
+                    g_size = points[g].shape[0]
+                    edges_range = np.array(range(g_size))
+                    edges = np.hstack((
+                        edges_range[:g_size-1, None], edges_range[1:, None]
+                    ))
+                    svs = SVS(
+                        points[g], tplt_edge=edges, tolerance=0.5,
+                        nu=0.4, gamma=0.9, max_f=6
+                    )
+                    svs_list.append(svs)
+                    # Store SVS Image
+                    mio.export_image(
+                        svs.svs_image(xr=range(xr), yr=range(yr)),
+                        '{}/svs_{:04d}_g{}.png'.format(svs_path_in, j, ii),
+                        overwrite=True
+                    )
+
+                # Create gif from svs group
+                #     convert -delay 10 -loop 0 svs_0001_g*.png test.gif
+                subprocess.Popen([
+                    'convert',
+                    '-delay', '10', '-loop', '0',
+                    '{0}/svs_{1:04d}_g*.png'.format(svs_path_in, j),
+                    '{0}/svs_{1:04d}.gif'.format(svs_path_in, j)])
         else:
             svs_path_in = self._svs_path
             svs_path_out = '{}/.cache/svs_result_custom'.format(home_dir)
@@ -892,13 +926,13 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             })
 
         # Call Matlab to Build Flows
-        print_dynamic('Building Shape Flow')
+        print_dynamic('      Building Shape Flow')
         matE.cd(mat_code_path)
         p = matE.run_function(
             'addpath(\'{0}/{1}\');addpath(\'{0}/{2}\');build_flow(\'{3}\', '
             '\'{4}\', \'{5}\', {6}, {7}, {8}, \'{3}/{9}\')'.format(
                 mat_code_path, 'cudafiles', 'tools',
-                svs_path_in, svs_path_out, 'svs_%04d.png', self.template+1,
+                svs_path_in, svs_path_out, 'svs_%04d.gif', self.template+1,
                 1, nFrame, 'bas.mat'
             )
         )

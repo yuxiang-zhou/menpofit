@@ -53,7 +53,8 @@ class SVS(Viewable):
                     min_dist = minimum_distance(
                         self.points[e[0]],
                         self.points[e[1]],
-                        np.array([i, j]))
+                        np.array([i, j])
+                    )
                     if min_dist < max_dist:
                         max_dist = min_dist
                     if min_dist < tolerance:
