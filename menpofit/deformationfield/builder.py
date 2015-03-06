@@ -16,10 +16,12 @@ from menpo.shape import TriMesh
 from scipy.spatial import KDTree
 
 import os
+import sys
 import subprocess
 import numpy as np
 import menpo.io as mio
 import scipy.io as sio
+
 
 
 # Optical Flow Transform
@@ -928,16 +930,17 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         # Call Matlab to Build Flows
         print_dynamic('      Building Shape Flow')
         matE.cd(mat_code_path)
-        p = matE.run_function(
-            'addpath(\'{0}/{1}\');addpath(\'{0}/{2}\');build_flow(\'{3}\', '
-            '\'{4}\', \'{5}\', {6}, {7}, {8}, \'{3}/{9}\')'.format(
-                mat_code_path, 'cudafiles', 'tools',
-                svs_path_in, svs_path_out, 'svs_%04d.gif', self.template+1,
-                1, nFrame, 'bas.mat'
-            )
-        )
+        fstr = 'addpath(\'{0}/{1}\');' \
+               'addpath(\'{0}/{2}\');' \
+               'build_flow(\'{3}\', \'{4}\', \'{5}\', {6}, {7}, ' \
+               '{8}, \'{3}/{9}\')'.format(
+                    mat_code_path, 'cudafiles', 'tools',
+                    svs_path_in, svs_path_out, 'svs_%04d.gif', self.template+1,
+                    1, nFrame, 'bas.mat'
+               )
+        sys.stderr.write(fstr)
+        p = matE.run_function(fstr)
         p.wait()
-
 
         # Retrieve Results
         mat = sio.loadmat(
