@@ -1,5 +1,5 @@
 from menpofit.aam.fitter import LucasKanadeAAMFitter, AAMMultilevelFittingResult
-from menpofit.lucaskanade.appearance import AlternatingInverseCompositional
+from menpofit.lucaskanade.appearance import SIC
 from menpofit.modelinstance import OrthoPDM
 from menpofit.transform import DifferentiableAlignmentSimilarity
 from menpofit.transform import DifferentiableThinPlateSplines as tps
@@ -124,7 +124,7 @@ class DFFittingResult(ParametricFittingResult):
     #                       :self.n_landmarks])
 
 
-class DeformationFieldAICompositional(AlternatingInverseCompositional):
+class DeformationFieldAICompositional(SIC):
 
     def _create_fitting_result(self, image, parameters, gt_shape=None):
         return DFFittingResult(image, self, parameters=[parameters],

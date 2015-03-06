@@ -8,7 +8,7 @@ from menpofit.deformationfield.MatlabExecuter import MatlabExecuter
 from menpo.feature import igo
 from menpo.shape import PointCloud
 from menpo.transform.groupalign.base import MultipleAlignment
-from menpo.math import principal_component_decomposition as pca
+from menpo.math import pca
 from menpo.model import PCAModel
 from menpo.visualize import print_dynamic, progress_bar_str
 from menpo.transform import Translation, AlignmentSimilarity
@@ -731,7 +731,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 '{}/{}'.format(self._svs_path, 'svs_0000.png')
             )
             h, w = svs_img.shape
-            self.reference_frame = MaskedImage.blank((h, w))
+            self.reference_frame = MaskedImage.init_blank((h, w))
         # Translation between reference shape and aliened shapes
         align_centre = icp.target.centre_of_bounds()
         align_t = Translation(
@@ -935,7 +935,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                'build_flow(\'{3}\', \'{4}\', \'{5}\', {6}, {7}, ' \
                '{8}, \'{3}/{9}\')'.format(
                     mat_code_path, 'cudafiles', 'tools',
-                    svs_path_in, svs_path_out, 'svs_%04d.gif', self.template+1,
+                    svs_path_in, svs_path_out, 'svs_%04d.png', self.template+1,
                     1, nFrame, 'bas.mat'
                )
         sys.stderr.write(fstr)
