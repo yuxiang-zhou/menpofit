@@ -15,7 +15,7 @@ class SVS(Viewable):
         self._build(nu, kernel, gamma, tolerance, tplt_edge, max_f)
 
     def _build(self, nu, kernel, gamma, tolerance, tplt_edge, max_f):
-
+        accept_rate = 0.5
         margin = 10
         min_p = np.min(self.points, axis=0).astype('int')
         max_p = np.max(self.points, axis=0).astype('int')
@@ -53,13 +53,16 @@ class SVS(Viewable):
                     min_dist = minimum_distance(
                         self.points[e[0]],
                         self.points[e[1]],
-                        np.array([i, j])
+                        np.array([i, j]),
+                        accept_rate
                     )
                     if min_dist < max_dist:
                         max_dist = min_dist
                     if min_dist < tolerance:
                         valid = False
+                    if min_dist < accept_rate:
                         training_points_positive.append([i, j])
+                        break
 
                 if valid and max_dist < max_f*tolerance:
                     training_points_negative.append([i, j])
@@ -102,18 +105,29 @@ class SVS(Viewable):
     def svs_image(self, xr=None, yr=None):
         w = len(xr)
         h = len(yr)
-        img = MaskedImage.blank((w, h))
+        img = MaskedImage.init_blank((w, h))
         for i, x in enumerate(xr):
             for j, y in enumerate(yr):
-                img.pixels[i, j] = self.svs.decision_function([[x, y]])[0]
+                pix = self.svs.decision_function([[x, y]])[0]
+                # pix = 1 if pix > 1 else pix
+                # pix = 0 if pix < 0 else pix
+                img.pixels[0, i, j] = pix
 
         minp = np.min(img.pixels)
         maxp = np.max(img.pixels)
         img.pixels = (img.pixels - minp) / (maxp-minp)
+
+        reject_level = img.pixels[0, 0, 0] + 0.05
+
+        for i, x in enumerate(xr):
+            for j, y in enumerate(yr):
+                if img.pixels[0, i, j] <= reject_level:
+                    img.pixels[0, i, j] = 0
+
         return img
 
 
-def minimum_distance(v, w, p):
+def minimum_distance(v, w, p, tolerance=1):
 #     Return minimum distance between line segment (v,w) and point p
     l2 = dist(v, w)  # i.e. |w-v|^2 -  avoid a sqrt
     if l2 == 0.0:
@@ -124,9 +138,9 @@ def minimum_distance(v, w, p):
 #     It falls where t = [(p-v) . (w-v)] / |w-v|^2
     t = np.dot((p - v) / l2, (w - v) / l2)
     if t < 0.0:
-        return dist(p, v)      # // Beyond the 'v' end of the segment
+        return dist(p, v) + tolerance      # // Beyond the 'v' end of the segment
     elif t > 1.0:
-        return dist(p, w)  # // Beyond the 'w' end of the segment
+        return dist(p, w) + tolerance  # // Beyond the 'w' end of the segment
 
     projection = v + t * (w - v) # // Projection falls on the segment
     return dist(p, projection)

@@ -772,7 +772,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         svs_path_in = '{}/.cache/svs_training'.format(home_dir)
         svs_path_out = '{}/.cache/svs_result'.format(home_dir)
         matE = MatlabExecuter()
-        mat_code_path = '/vol/atlas/homes/yz4009/gitdev/mfsfbb'
+        mat_code_path = '/vol/atlas/homes/yz4009/gitdev/mfsfdev'
         if not os.path.exists(svs_path_in):
             os.makedirs(svs_path_in)
 
@@ -816,8 +816,8 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 tplt_edge = np.concatenate(edge_g)
                 # Train svs
                 svs = SVS(
-                    points, tplt_edge=tplt_edge, tolerance=0.5, nu=0.4,
-                    gamma=0.9, max_f=6
+                    points, tplt_edge=tplt_edge, tolerance=3, nu=0.8,
+                    gamma=0.8, max_f=20
                 )
                 svs_list.append(svs)
                 # Store SVS Image
@@ -835,8 +835,8 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                         edges_range[:g_size-1, None], edges_range[1:, None]
                     ))
                     svs = SVS(
-                        points[g], tplt_edge=edges, tolerance=0.5,
-                        nu=0.4, gamma=0.9, max_f=6
+                        points[g], tplt_edge=edges, tolerance=3, nu=0.8,
+                        gamma=0.8, max_f=20
                     )
                     svs_list.append(svs)
                     # Store SVS Image
@@ -858,7 +858,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             svs_path_out = '{}/.cache/svs_result_custom'.format(home_dir)
 
         nFrame = len(icp.aligned_shapes)
-        if self._svs_path is None:
+        if self._svs_path is None or True:
             # Build basis
             # group correspondence
             align_gcorr = None
