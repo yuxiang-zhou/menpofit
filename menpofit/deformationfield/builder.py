@@ -669,6 +669,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                  max_shape_components=None, max_appearance_components=None,
                  boundary=10, template=0):
         self._svs_path = None
+        self._flow_path = None
         super(OpticalFieldBuilder, self).__init__(
             features, transform,
             trilist, normalization_diagonal, n_levels,
@@ -678,15 +679,21 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         )
 
     def build(self, images, group=None, label=None, verbose=False,
-              target_shape=None, svs_path=None):
+              target_shape=None, svs_path=None, flow_path=None):
 
         self._svs_path = svs_path
+        self._flow_path = flow_path
 
         return super(OpticalFieldBuilder, self).build(
             images, group, label, verbose, target_shape
         )
 
     def _build_shape_model(self, shapes, max_components, target_shape):
+
+        # Parameters
+        alpha = 15
+        pdm = 0
+
         # Simulate inconsist annotation
         sample_groups = []
         g_i = self._feature_images[0][self.template].landmarks[
@@ -855,7 +862,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     '{0}/svs_{1:04d}.gif'.format(svs_path_in, j)])
         else:
             svs_path_in = self._svs_path
-            svs_path_out = '{}/.cache/svs_result_custom'.format(home_dir)
+            svs_path_out = '{}/{}'.format(home_dir, svs_path_in)
 
         nFrame = len(icp.aligned_shapes)
         if self._svs_path is None or True:
@@ -928,19 +935,24 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             })
 
         # Call Matlab to Build Flows
-        print_dynamic('      Building Shape Flow')
-        matE.cd(mat_code_path)
-        fstr = 'addpath(\'{0}/{1}\');' \
-               'addpath(\'{0}/{2}\');' \
-               'build_flow(\'{3}\', \'{4}\', \'{5}\', {6}, {7}, ' \
-               '{8}, \'{3}/{9}\')'.format(
-                    mat_code_path, 'cudafiles', 'tools',
-                    svs_path_in, svs_path_out, 'svs_%04d.png', self.template+1,
-                    1, nFrame, 'bas.mat'
-               )
-        sys.stderr.write(fstr)
-        p = matE.run_function(fstr)
-        p.wait()
+        if self._flow_path is None:
+            print_dynamic('  - Building Shape Flow')
+            matE.cd(mat_code_path)
+            fstr = 'addpath(\'{0}/{1}\');' \
+                   'addpath(\'{0}/{2}\');' \
+                   'build_flow(\'{3}\', \'{4}\', \'{5}\', {6}, {7}, ' \
+                   '{8}, \'{3}/{9}\', {10}, {11})'.format(
+                        mat_code_path, 'cudafiles', 'tools',
+                        svs_path_in, svs_path_out, 'svs_%04d.gif',
+                        self.template+1,
+                        1, nFrame, 'bas.mat',
+                        alpha, pdm
+                   )
+            sys.stderr.write(fstr)
+            p = matE.run_function(fstr)
+            p.wait()
+        else:
+            svs_path_out = self._flow_path
 
         # Retrieve Results
         mat = sio.loadmat(

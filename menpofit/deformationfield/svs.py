@@ -17,10 +17,15 @@ class SVS(Viewable):
     def _build(self, nu, kernel, gamma, tolerance, tplt_edge, max_f):
         accept_rate = 0.5
         margin = 10
+        sample_step = 1
         min_p = np.min(self.points, axis=0).astype('int')
         max_p = np.max(self.points, axis=0).astype('int')
-        self._range_x = range_x = range(min_p[0]-margin, max_p[0]+margin)
-        self._range_y = range_y = range(min_p[1]-margin, max_p[1]+margin)
+        self._range_x = range_x = np.arange(
+            min_p[0]-margin, max_p[0]+margin, sample_step
+        )
+        self._range_y = range_y = np.arange(
+            min_p[1]-margin, max_p[1]+margin, sample_step
+        )
 
         # Generate negtive points
         # Build Triangle Mesh
