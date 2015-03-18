@@ -670,6 +670,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                  boundary=10, template=0):
         self._svs_path = None
         self._flow_path = None
+        self._is_mc = True
         super(OpticalFieldBuilder, self).__init__(
             features, transform,
             trilist, normalization_diagonal, n_levels,
@@ -679,10 +680,11 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         )
 
     def build(self, images, group=None, label=None, verbose=False,
-              target_shape=None, svs_path=None, flow_path=None):
+              target_shape=None, svs_path=None, flow_path=None, multi_channel=True):
 
         self._svs_path = svs_path
         self._flow_path = flow_path
+        self._is_mc = multi_channel
 
         return super(OpticalFieldBuilder, self).build(
             images, group, label, verbose, target_shape
@@ -938,12 +940,13 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         if self._flow_path is None:
             print_dynamic('  - Building Shape Flow')
             matE.cd(mat_code_path)
+            ext = 'gif' if self._is_mc else 'png'
             fstr = 'addpath(\'{0}/{1}\');' \
                    'addpath(\'{0}/{2}\');' \
                    'build_flow(\'{3}\', \'{4}\', \'{5}\', {6}, {7}, ' \
                    '{8}, \'{3}/{9}\', {10}, {11})'.format(
                         mat_code_path, 'cudafiles', 'tools',
-                        svs_path_in, svs_path_out, 'svs_%04d.gif',
+                        svs_path_in, svs_path_out, 'svs_%04d.{}'.format(ext),
                         self.template+1,
                         1, nFrame, 'bas.mat',
                         alpha, pdm
