@@ -866,23 +866,29 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             svs_path_in = self._svs_path
             svs_path_out = '{}/{}'.format(home_dir, svs_path_in)
 
+        print_dynamic('  - Building Trajectory Basis')
         nFrame = len(icp.aligned_shapes)
         if self._svs_path is None or True:
             # Build basis
             # group correspondence
-            align_gcorr = None
+            align_gcorr = []
             groups = np.array(sample_groups)
             tps_t = []
-            for g in groups:
-                g_align_s = []
-                for aligned_s in icp.aligned_shapes:
-                    g_align_s.append(PointCloud(aligned_s.points[g]))
-                gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
-                g_align = np.array(gnicp.point_correspondence) + g[0]
-                if align_gcorr is None:
-                    align_gcorr = g_align
-                else:
-                    align_gcorr = np.hstack((align_gcorr, g_align))
+
+            if self._is_mc:
+                for g in groups:
+                    g_align_s = []
+                    for aligned_s in icp.aligned_shapes:
+                        g_align_s.append(PointCloud(aligned_s.points[g]))
+                    gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+                    g_align = np.array(gnicp.point_correspondence) + g[0]
+                    if align_gcorr is None:
+                        align_gcorr = g_align
+                    else:
+                        align_gcorr = np.hstack((align_gcorr, g_align))
+            else:
+                nicp = NICP(icp.aligned_shapes, icp.target)
+                align_gcorr.append(nicp.point_correspondence)
 
             # compute non-linear transforms (tps)
             for a_s, a_corr in zip(aligned_shapes, align_gcorr):
