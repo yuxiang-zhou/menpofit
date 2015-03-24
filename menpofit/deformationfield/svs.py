@@ -105,7 +105,7 @@ class SVS(Viewable):
         PointCloud(self._positive_pts).view(marker_face_colour='w')
 
     def view(self, xr=None, yr=None):
-        self.svs_image().view()
+        self.svs_image(xr, yr).view()
 
     def svs_image(self, xr=None, yr=None):
         w = len(xr)
