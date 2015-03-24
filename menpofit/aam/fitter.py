@@ -8,6 +8,22 @@ from menpofit.transform import (ModelDrivenTransform, OrthoMDTransform,
                                 DifferentiableAlignmentSimilarity)
 from menpofit.lucaskanade.appearance import SIC
 
+from menpofit.modelinstance import OrthoPDM
+from menpofit.transform import DifferentiableAlignmentSimilarity
+from menpofit.transform import DifferentiableThinPlateSplines as tps
+from menpofit.fittingresult import ParametricFittingResult
+from menpo.transform.base import Transform, VInvertible, VComposable
+from menpo.transform import Translation, AlignmentSimilarity
+from menpofit.base import create_pyramid
+from menpofit.builder import normalization_wrt_reference_shape
+from menpo.shape import PointCloud
+
+from menpofit.deformationfield.builder import ICP, NICP
+from menpofit.deformationfield.lineerror import line_diff, compute_line_error
+
+import numpy as np
+from scipy.spatial import KDTree
+
 
 class AAMFitter(MultilevelFitter):
     r"""
@@ -423,3 +439,66 @@ class AAMMultilevelFittingResult(AMMultilevelFittingResult):
                         shape_weights=swt, appearance_weights=None,
                         level=level))
         return aam_reconstructions
+
+    def final_error(self, error_type='me_norm'):
+        # t = self.fitter.fitters[-1].transform
+        # return compute_error(t, self.final_shape, self.aam.reference_frame,
+        #         self.image, self.appearance_reconstructions[-1])
+        shape = PointCloud(self.final_shape.points[:self.aam.n_landmarks])
+        cr = ICP([shape], self._gt_shape).point_correspondence
+
+        return compute_line_error(
+            # shape, PointCloud(self._gt_shape.points[cr[0]])
+            shape, self._gt_shape, self.aam.group_corr
+        )
+
+    def initial_error(self, error_type='me_norm'):
+        # t = self.fitter.fitters[-1].transform
+        # return compute_error(t, self.initial_shape, self.aam.reference_frame,
+        #         self.image, self.appearance_reconstructions[0])
+        shape = PointCloud(self.initial_shape.points[:self.aam.n_landmarks])
+        cr = ICP([shape], self._gt_shape).point_correspondence
+
+        return compute_line_error(
+            # shape, PointCloud(self._gt_shape.points[cr[0]])
+            shape, self._gt_shape, self.aam.group_corr
+        )
+
+    @property
+    def aam(self):
+        return self.fitter.aam
+
+    def errors(self, error_type='me_norm'):
+        r"""
+        Returns a list containing the error at each fitting iteration.
+
+        Parameters
+        -----------
+        error_type : `str` ``{'me_norm', 'me', 'rmse'}``, optional
+            Specifies the way in which the error between the fitted and
+            ground truth shapes is to be computed.
+
+        Returns
+        -------
+        errors : `list` of `float`
+            The errors at each iteration of the fitting process.
+        """
+        # if self.gt_shape is not None:
+        #     return [compute_error(
+        #         PointCloud(t.points[:self.fitting_results[-1].n_landmarks]),
+        #         self.gt_shape, error_type)
+        #         for t in self.shapes]
+        # else:
+        #     raise ValueError('Ground truth has not been set, errors cannot '
+        #                      'be computed')
+        # t = self.fitter.fitters[-1].transform
+        # return [compute_appearance_error(t, s, self.aam.reference_frame,
+        #         self.image, ar) for (s, ar) in
+        #         zip(self.shapes, self.appearance_reconstructions)]
+        corr = ICP(self.sparse_shapes, self._gt_shape).point_correspondence
+
+        return [compute_line_error(
+            PointCloud(s.points[:self.aam.n_landmarks]),
+            # PointCloud(self._gt_shape.points[cr])
+            self._gt_shape, self.aam.group_corr
+        ) for (s, cr) in zip(self.shapes, corr)]

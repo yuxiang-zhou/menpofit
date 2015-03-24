@@ -12,6 +12,7 @@ from menpo.shape import PointCloud
 from menpofit.fittingresult import compute_error
 
 from .builder import ICP, NICP
+from .lineerror import line_diff, compute_line_error
 
 import numpy as np
 from scipy.spatial import KDTree
@@ -65,25 +66,27 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
     def set_target(self, target):
         if target.n_points < self.target.n_points:
             # densify target
-            icp = ICP([self.sparse_target], target)
+            # icp = ICP([self.sparse_target], target)
+            #
+            # # Finding Correspondence by Group
+            # align_gcorr = None
+            # groups = self.group_corr
+            #
+            # for g in groups:
+            #     g_align_s = []
+            #     for aligned_s in icp.aligned_shapes:
+            #         g_align_s.append(PointCloud(aligned_s.points[g]))
+            #     gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+            #     g_align = np.array(gnicp.point_correspondence) + g[0]
+            #     if align_gcorr is None:
+            #         align_gcorr = g_align
+            #     else:
+            #         align_gcorr = np.hstack((align_gcorr, g_align))
+            #
+            # if align_gcorr is None:
+            #     align_gcorr = [range(self.n_landmarks)]
 
-            # Finding Correspondence by Group
-            align_gcorr = None
-            groups = self.group_corr
-
-            for g in groups:
-                g_align_s = []
-                for aligned_s in icp.aligned_shapes:
-                    g_align_s.append(PointCloud(aligned_s.points[g]))
-                gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
-                g_align = np.array(gnicp.point_correspondence) + g[0]
-                if align_gcorr is None:
-                    align_gcorr = g_align
-                else:
-                    align_gcorr = np.hstack((align_gcorr, g_align))
-
-            if align_gcorr is None:
-                align_gcorr = [range(self.n_landmarks)]
+            align_gcorr = [range(self.n_landmarks)]
             
             target = PointCloud(target.points[align_gcorr[0]])
             target = np.dot(np.dot(target.as_vector(), self.pinv_v), self.W)
@@ -148,9 +151,9 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         shape = PointCloud(self.final_shape.points[:self.aam.n_landmarks])
         cr = ICP([shape], self._gt_shape).point_correspondence
 
-        return compute_error(
+        return compute_line_error(
             # shape, PointCloud(self._gt_shape.points[cr[0]])
-            shape, self._gt_shape
+            shape, self._gt_shape, self.aam.group_corr
         )
 
     def initial_error(self, error_type='me_norm'):
@@ -160,9 +163,9 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         shape = PointCloud(self.initial_shape.points[:self.aam.n_landmarks])
         cr = ICP([shape], self._gt_shape).point_correspondence
 
-        return compute_error(
+        return compute_line_error(
             # shape, PointCloud(self._gt_shape.points[cr[0]])
-            shape, self._gt_shape
+            shape, self._gt_shape, self.aam.group_corr
         )
 
     @property
@@ -198,10 +201,10 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         #         zip(self.shapes, self.appearance_reconstructions)]
         corr = ICP(self.sparse_shapes, self._gt_shape).point_correspondence
 
-        return [compute_error(
+        return [compute_line_error(
             PointCloud(s.points[:self.aam.n_landmarks]),
             # PointCloud(self._gt_shape.points[cr])
-            self._gt_shape
+            self._gt_shape, self.aam.group_corr
         ) for (s, cr) in zip(self.shapes, corr)]
 
     def appearance_errors(self):

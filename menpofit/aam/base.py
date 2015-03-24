@@ -62,7 +62,7 @@ class AAM(DeformableModel):
     """
     def __init__(self, shape_models, appearance_models, n_training_images,
                  transform, features, reference_shape, downscale,
-                 scaled_shape_models):
+                 scaled_shape_models, n_landmarks, group_corr):
         DeformableModel.__init__(self, features)
         self.n_training_images = n_training_images
         self.shape_models = shape_models
@@ -71,6 +71,8 @@ class AAM(DeformableModel):
         self.reference_shape = reference_shape
         self.downscale = downscale
         self.scaled_shape_models = scaled_shape_models
+        self.n_landmarks = n_landmarks
+        self.group_corr = group_corr
 
     @property
     def n_levels(self):
