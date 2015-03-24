@@ -871,7 +871,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         if self._svs_path is None or True:
             # Build basis
             # group correspondence
-            align_gcorr = []
+            align_gcorr = None
             groups = np.array(sample_groups)
             tps_t = []
 
