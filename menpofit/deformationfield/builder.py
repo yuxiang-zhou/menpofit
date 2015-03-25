@@ -868,7 +868,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
 
         print_dynamic('  - Building Trajectory Basis')
         nFrame = len(icp.aligned_shapes)
-        if self._svs_path is None or True:
+        if self._svs_path is None:
             # Build basis
             # group correspondence
             align_gcorr = None
