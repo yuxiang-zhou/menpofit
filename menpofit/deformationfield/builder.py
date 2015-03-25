@@ -1014,7 +1014,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             _build_shape_model(dense_shapes, max_components)
 
         # dummy
-        self.group_corr = []
+        self.group_corr = [range(self.n_landmarks)]
         self.reference_shape = dense_reference_shape
 
         return dense_shape_model
