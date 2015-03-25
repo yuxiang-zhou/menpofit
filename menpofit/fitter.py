@@ -2,10 +2,11 @@ from __future__ import division
 import abc
 from menpo.transform import AlignmentAffine, Scale, AlignmentSimilarity
 import numpy as np
-from menpo.shape import PointCloud
+from menpo.shape import PointCloud, TriMesh
 from menpofit.base import is_pyramid_on_features, pyramid_of_feature_images, \
     noisy_align
 from menpofit.fittingresult import MultilevelFittingResult
+from menpo.transform.icp import nicp
 
 
 class Fitter(object):
@@ -191,6 +192,8 @@ class MultilevelFitter(Fitter):
             The initial shape.
         """
         reference_shape = self.reference_shape
+        _, corr = nicp(TriMesh(gt_shape.points), reference_shape)
+        reference_shape = PointCloud(self.reference_shape.points[corr, :])
         return noisy_align(reference_shape, gt_shape, noise_std=noise_std,
                            rotation=rotation).apply(reference_shape)
 
@@ -253,7 +256,12 @@ class MultilevelFitter(Fitter):
 
         # rescale image wrt the scale factor between reference_shape and
         # initial_shape
-        image = image.rescale_to_reference_shape(self.reference_shape,
+        rshape = initial_shape.copy()
+        bmin, bmax = self.reference_shape.bounds()
+        imin, imax = np.meshgrid(bmin, bmax)
+        rshape.points[0:4, 0] = imin.flatten()
+        rshape.points[0:4, 1] = imax.flatten()
+        image = image.rescale_to_reference_shape(rshape,
                                                  group='initial_shape')
 
         images = list(reversed(list(pyramid_of_feature_images(

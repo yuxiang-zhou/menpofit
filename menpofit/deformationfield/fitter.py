@@ -6,9 +6,10 @@ from menpofit.transform import DifferentiableThinPlateSplines as tps
 from menpofit.fittingresult import ParametricFittingResult
 from menpo.transform.base import Transform, VInvertible, VComposable
 from menpo.transform import Translation, AlignmentSimilarity
+from menpo.transform.icp import nicp
 from menpofit.base import create_pyramid
 from menpofit.builder import normalization_wrt_reference_shape
-from menpo.shape import PointCloud
+from menpo.shape import PointCloud, TriMesh
 from menpofit.fittingresult import compute_error
 
 from .builder import ICP, NICP
@@ -83,7 +84,8 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
                     align_gcorr = np.hstack((align_gcorr, g_align))
 
             if align_gcorr is None:
-                align_gcorr = [range(self.n_landmarks)]
+                _, corr = nicp(TriMesh(self.sparse_target.points), target)
+                align_gcorr = [corr]
             
             target = PointCloud(target.points[align_gcorr[0]])
             target = np.dot(np.dot(target.as_vector(), self.pinv_v), self.W)
@@ -142,6 +144,7 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         # self._prepare_gt_rf()
 
     def final_error(self, error_type='me_norm'):
+        return 0
         # t = self.fitter.fitters[-1].transform
         # return compute_error(t, self.final_shape, self.aam.reference_frame,
         #         self.image, self.appearance_reconstructions[-1])
@@ -154,6 +157,7 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         )
 
     def initial_error(self, error_type='me_norm'):
+        return 0
         # t = self.fitter.fitters[-1].transform
         # return compute_error(t, self.initial_shape, self.aam.reference_frame,
         #         self.image, self.appearance_reconstructions[0])
@@ -170,6 +174,7 @@ class DFMultilevelFittingResult(AAMMultilevelFittingResult):
         return self.fitter.aam
 
     def errors(self, error_type='me_norm'):
+        return 0
         r"""
         Returns a list containing the error at each fitting iteration.
 

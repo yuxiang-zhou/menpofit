@@ -3,7 +3,6 @@ from menpofit.base import create_pyramid
 from menpofit.transform import DifferentiableThinPlateSplines
 from menpo.transform.base import Transform
 from menpofit.deformationfield import SVS
-from menpofit.builder import normalization_wrt_reference_shape
 from menpofit.deformationfield.MatlabExecuter import MatlabExecuter
 from menpo.feature import igo
 from menpo.shape import PointCloud
@@ -12,6 +11,8 @@ from menpo.math import pca
 from menpo.model import PCAModel
 from menpo.visualize import print_dynamic, progress_bar_str
 from menpo.transform import Translation, AlignmentSimilarity
+from menpo.transform import Scale
+from menpo.transform.icp import nicp
 from menpo.shape import TriMesh
 from scipy.spatial import KDTree
 
@@ -21,7 +22,6 @@ import subprocess
 import numpy as np
 import menpo.io as mio
 import scipy.io as sio
-
 
 
 # Optical Flow Transform
@@ -696,16 +696,6 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         alpha = 15
         pdm = 0
 
-        # Simulate inconsist annotation
-        sample_groups = []
-        g_i = self._feature_images[0][self.template].landmarks[
-            'groups'].items()
-        lindex = 0
-        for i in g_i:
-            g_size = i[1].n_points
-            sample_groups.append(range(lindex, lindex + g_size))
-            lindex += g_size
-
         # Align Shapes Using ICP
         if target_shape is None:
             target_shape = shapes[self.template]
@@ -800,15 +790,18 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 # Construct tplt_edge
                 tplt_edge = None
                 lindex = 0
+
+                temp_img = self._feature_images[0][j-1] if j > 0 \
+                    else self._feature_images[0][j]
                 # Get Grouped Landmark Indexes
-                if j > 0:
-                    g_i = self._feature_images[0][j-1].landmarks['groups']
+                if 'groups' in temp_img.landmarks.keys():
+                    g_i = temp_img.landmarks['groups'].items()
                 else:
-                    g_i = self._feature_images[0][j].landmarks['groups']
+                    g_i = [[range(points.shape[0]), PointCloud(points)]]
 
                 edge_g = []
                 edge_ig = []
-                for g in g_i.items():
+                for g in g_i:
                     g_size = g[1].n_points
                     rindex = g_size+lindex
                     edges_range = np.array(range(lindex, rindex))
@@ -823,9 +816,12 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     lindex = rindex
 
                 tplt_edge = np.concatenate(edge_g)
+
+                eids = np.arange(points.shape[0])
+                temp_edge = np.hstack((eids[:, None], eids[:, None]))
                 # Train svs
                 svs = SVS(
-                    points, tplt_edge=tplt_edge, tolerance=3, nu=0.8,
+                    points, tplt_edge=temp_edge, tolerance=3, nu=0.8,
                     gamma=0.8, max_f=20
                 )
                 svs_list.append(svs)
@@ -836,46 +832,56 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     overwrite=True
                 )
 
-                # Train Group SVS
-                for ii, g in enumerate(edge_ig):
-                    g_size = points[g].shape[0]
-                    edges_range = np.array(range(g_size))
-                    edges = np.hstack((
-                        edges_range[:g_size-1, None], edges_range[1:, None]
-                    ))
-                    svs = SVS(
-                        points[g], tplt_edge=edges, tolerance=3, nu=0.8,
-                        gamma=0.8, max_f=20
-                    )
-                    svs_list.append(svs)
-                    # Store SVS Image
-                    mio.export_image(
-                        svs.svs_image(xr=range(xr), yr=range(yr)),
-                        '{}/svs_{:04d}_g{}.png'.format(svs_path_in, j, ii),
-                        overwrite=True
-                    )
-
-                # Create gif from svs group
-                #     convert -delay 10 -loop 0 svs_0001_g*.png test.gif
-                subprocess.Popen([
-                    'convert',
-                    '-delay', '10', '-loop', '0',
-                    '{0}/svs_{1:04d}_g*.png'.format(svs_path_in, j),
-                    '{0}/svs_{1:04d}.gif'.format(svs_path_in, j)])
+                # # Train Group SVS
+                # for ii, g in enumerate(edge_ig):
+                #     g_size = points[g].shape[0]
+                #     edges_range = np.array(range(g_size))
+                #     edges = np.hstack((
+                #         edges_range[:g_size-1, None], edges_range[1:, None]
+                #     ))
+                #     svs = SVS(
+                #         points[g], tplt_edge=edges, tolerance=3, nu=0.8,
+                #         gamma=0.8, max_f=20
+                #     )
+                #     svs_list.append(svs)
+                #     # Store SVS Image
+                #     mio.export_image(
+                #         svs.svs_image(xr=range(xr), yr=range(yr)),
+                #         '{}/svs_{:04d}_g{}.png'.format(svs_path_in, j, ii),
+                #         overwrite=True
+                #     )
+                #
+                # # Create gif from svs group
+                # #     convert -delay 10 -loop 0 svs_0001_g*.png test.gif
+                # subprocess.Popen([
+                #     'convert',
+                #     '-delay', '10', '-loop', '0',
+                #     '{0}/svs_{1:04d}_g*.png'.format(svs_path_in, j),
+                #     '{0}/svs_{1:04d}.gif'.format(svs_path_in, j)])
         else:
             svs_path_in = self._svs_path
-            svs_path_out = '{}/{}'.format(home_dir, svs_path_in)
+            svs_path_out = '{}'.format(svs_path_in)
 
         print_dynamic('  - Building Trajectory Basis')
         nFrame = len(icp.aligned_shapes)
-        if self._svs_path is None or True:
+        if self._svs_path is None:
             # Build basis
             # group correspondence
             align_gcorr = None
-            groups = np.array(sample_groups)
             tps_t = []
 
             if self._is_mc:
+                # Simulate inconsist annotation
+                sample_groups = []
+                g_i = self._feature_images[0][self.template].landmarks[
+                    'groups'].items()
+                lindex = 0
+                for i in g_i:
+                    g_size = i[1].n_points
+                    sample_groups.append(range(lindex, lindex + g_size))
+                    lindex += g_size
+
+                groups = np.array(sample_groups)
                 for g in groups:
                     g_align_s = []
                     for aligned_s in icp.aligned_shapes:
@@ -887,8 +893,10 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     else:
                         align_gcorr = np.hstack((align_gcorr, g_align))
             else:
-                nicp = NICP(icp.aligned_shapes, icp.target)
-                align_gcorr.append(nicp.point_correspondence)
+                align_gcorr = []
+                for a_s in icp.aligned_shapes:
+                    _, corr = nicp(TriMesh(a_s.points), icp.target)
+                    align_gcorr.append(corr)
 
             # compute non-linear transforms (tps)
             for a_s, a_corr in zip(aligned_shapes, align_gcorr):
@@ -1007,6 +1015,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
 
         # dummy
         self.group_corr = []
+        self.reference_shape = dense_reference_shape
 
         return dense_shape_model
 
@@ -1018,3 +1027,72 @@ def build_reference_frame(mean_shape):
     from menpofit.aam.base import build_reference_frame as brf
 
     return brf(reference_shape)
+
+
+def normalization_wrt_reference_shape(images, group, label, normalization_diagonal, verbose):
+    # get shapes
+    shapes = [i.landmarks[group][label] for i in images]
+
+    # compute the reference shape and fix its diagonal length
+    reference_shape = compute_reference_shape(shapes, normalization_diagonal,
+                                              verbose=verbose)
+
+    # normalize the scaling of all images wrt the reference_shape size
+    normalized_images = []
+    for c, i in enumerate(images):
+        if verbose:
+            print_dynamic('- Normalizing images size: {}'.format(
+                progress_bar_str((c + 1.) / len(images),
+                                 show_bar=False)))
+
+        lms = i.landmarks[group][label]
+        temp_shape = lms.copy()
+        bmin, bmax = reference_shape.bounds()
+        imin, imax = np.meshgrid(bmin, bmax)
+        temp_shape.points[0:4, 0] = imin.flatten()
+        temp_shape.points[0:4, 1] = imax.flatten()
+
+        normalized_images.append(i.rescale_to_reference_shape(
+            temp_shape, group=group, label=label))
+
+    if verbose:
+        print_dynamic('- Normalizing images size: Done\n')
+    return reference_shape, normalized_images
+
+
+def compute_reference_shape(shapes, normalization_diagonal, verbose=False):
+    r"""
+    Function that computes the reference shape as the mean shape of the provided
+    shapes.
+
+    Parameters
+    ----------
+    shapes : list of :map:`PointCloud`
+        The set of shapes from which to build the reference shape.
+
+    normalization_diagonal : `int`
+        If int, it ensures that the mean shape is scaled so that the
+        diagonal of the bounding box containing it matches the
+        normalization_diagonal value.
+        If None, the mean shape is not rescaled.
+
+    verbose : `bool`, Optional
+        Flag that controls information and progress printing.
+
+    Returns
+    -------
+    reference_shape : :map:`PointCloud`
+        The reference shape.
+    """
+    # the reference_shape is the mean shape of the images' landmarks
+    if verbose:
+        print_dynamic('- Computing reference shape')
+    reference_shape = PointCloud(np.vstack(pc.points for pc in shapes))
+
+    # fix the reference_shape's diagonal length if asked
+    if normalization_diagonal:
+        x, y = reference_shape.range()
+        scale = normalization_diagonal / np.sqrt(x**2 + y**2)
+        Scale(scale, reference_shape.n_dims).apply_inplace(reference_shape)
+
+    return reference_shape

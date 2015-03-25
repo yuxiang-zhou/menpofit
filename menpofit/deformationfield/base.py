@@ -68,8 +68,6 @@ class DeformationField(AAM):
             template.landmarks['source'].lms.points[:self.n_landmarks]
         )
 
-        appearance_instance.landmarks['source'] = landmarks
-
         reference_frame = self._build_reference_frame(
             PointCloud(shape_instance.points[:self.n_landmarks])
         )
