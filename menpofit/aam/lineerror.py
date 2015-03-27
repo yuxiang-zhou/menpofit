@@ -72,9 +72,13 @@ def compute_line_error(pts1, pts2, gp):
     _, l1 = arclen_polyl(pts1)
     _, l2 = arclen_polyl(pts2)
 
-
     error = 0
     for g in gp:
-        error += np.mean(line_diff(pts1[g, :], pts2[g, :]))
+        gl1 = pts1[g, :]
+        gl2 = pts2[g, :]
+        _, tl1 = arclen_polyl(gl1)
+        _, tl2 = arclen_polyl(gl2)
+        d1, d2 = line_diff(gl1, gl2)
+        error += np.sum(np.sqrt([d1*tl1, d2*tl2]))
 
     return error / (l1 + l2)
