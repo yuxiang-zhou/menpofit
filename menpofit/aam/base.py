@@ -212,7 +212,7 @@ class AAM(DeformableModel):
         from menpofit.visualize import visualize_shape_model
         visualize_shape_model(self.shape_models, n_parameters=n_parameters,
                               parameters_bounds=parameters_bounds,
-                              figure_size=figure_size, mode=mode, popup=popup)
+                              figure_size=figure_size, mode=mode)
 
     def view_appearance_models_widget(self, n_parameters=5,
                                       parameters_bounds=(-3.0, 3.0),
@@ -248,7 +248,7 @@ class AAM(DeformableModel):
                                    n_parameters=n_parameters,
                                    parameters_bounds=parameters_bounds,
                                    figure_size=figure_size, mode=mode,
-                                   popup=popup)
+                                   )
 
     def view_aam_widget(self, n_shape_parameters=5, n_appearance_parameters=5,
                         parameters_bounds=(-3.0, 3.0), mode='multiple',
