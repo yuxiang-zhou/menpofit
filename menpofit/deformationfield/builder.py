@@ -23,7 +23,6 @@ import menpo.io as mio
 import scipy.io as sio
 
 
-
 # Optical Flow Transform
 class OpticalFlowTransform(Transform):
     def __init__(self, u, v):
@@ -551,7 +550,6 @@ class DeformationFieldBuilder(AAMBuilder):
             align_centre - self.reference_frame.centre
         )
         # Mask Reference Frame
-        self.n_landmarks = icp.target.points.shape[0]
         self.reference_frame.landmarks['sparse'] = align_t.apply(icp.target)
         self.reference_frame.constrain_mask_to_landmarks(group='sparse')
 
@@ -610,6 +608,8 @@ class DeformationFieldBuilder(AAMBuilder):
         # build dense shape model
         dense_shape_model = super(DeformationFieldBuilder, self). \
             _build_shape_model(dense_shapes, max_components)
+
+        self.n_landmarks = icp.target.points.shape[0]
 
         return dense_shape_model
 
@@ -756,7 +756,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             self.reference_frame.mask.pixels.shape, dtype=np.bool)
 
         # Mask Reference Frame
-        self.n_landmarks = icp.target.points.shape[0]
+        n_landmarks = icp.target.points.shape[0]
         self.reference_frame.landmarks['sparse'] = align_t.apply(icp.target)
         # self.reference_frame.constrain_mask_to_landmarks(group='sparse')
 
@@ -888,7 +888,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                         align_gcorr = np.hstack((align_gcorr, g_align))
             else:
                 nicp = NICP(icp.aligned_shapes, icp.target)
-                align_gcorr.append(nicp.point_correspondence)
+                align_gcorr = nicp.point_correspondence
 
             # compute non-linear transforms (tps)
             for a_s, a_corr in zip(aligned_shapes, align_gcorr):
@@ -1005,8 +1005,13 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         dense_shape_model = super(DeformationFieldBuilder, self). \
             _build_shape_model(dense_shapes, max_components)
 
-        # dummy
-        self.group_corr = []
+        self.n_landmarks =n_landmarks
+
+        # group correlation
+        if self._is_mc:
+            self.group_corr = sample_groups
+        else:
+            self.group_corr = [range(self.n_landmarks)]
 
         return dense_shape_model
 

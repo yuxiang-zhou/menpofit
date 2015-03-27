@@ -199,6 +199,8 @@ class AAMBuilder(DeformableModelBuilder):
             to highest level
         """
         # compute reference_shape and normalize images size
+
+        self._feature_images = []
         self.reference_shape, normalized_images = \
             normalization_wrt_reference_shape(
                 images, group, label, self.normalization_diagonal, verbose
@@ -240,6 +242,7 @@ class AAMBuilder(DeformableModelBuilder):
                             progress_bar_str((c + 1.) / len(generators),
                                              show_bar=False)))
                 feature_images.append(next(g))
+            self._feature_images.append(feature_images)
 
             # extract potentially rescaled shapes
             shapes = [i.landmarks[group][label] for i in feature_images]
@@ -308,6 +311,18 @@ class AAMBuilder(DeformableModelBuilder):
                                n_training_images)
 
     def _build_shape_model(self, shapes, max_components):
+
+        sample_groups = []
+        g_i = self._feature_images[0][0].landmarks[
+            'groups'].items()
+        lindex = 0
+        for i in g_i:
+            g_size = i[1].n_points
+            sample_groups.append(range(lindex, lindex + g_size))
+            lindex += g_size
+
+        self.group_corr = sample_groups
+        self.n_landmarks = shapes[0].n_points
         return build_shape_model(shapes, max_components)
 
     def _compute_transforms(self, reference_frame, feature_images, group,
@@ -362,7 +377,8 @@ class AAMBuilder(DeformableModelBuilder):
         from .base import AAM
         return AAM(shape_models, appearance_models, n_training_images,
                    self.transform, self.features, self.reference_shape,
-                   self.downscale, self.scaled_shape_models)
+                   self.downscale, self.scaled_shape_models,
+                   self.n_landmarks, self.group_corr)
 
 
 class PatchBasedAAMBuilder(AAMBuilder):

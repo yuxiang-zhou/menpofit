@@ -14,11 +14,11 @@ class DeformationField(AAM):
                  normalization_diagonal, n_landmarks, group_corr):
         super(DeformationField, self).__init__(
             shape_models, appearance_models, n_training_images, transform,
-            features, reference_shape, downscale, scaled_shape_models)
+            features, reference_shape, downscale, scaled_shape_models,
+            n_landmarks, group_corr)
         self.reference_frame = reference_frame
         self.icp = icp
         self.normalization_diagonal = normalization_diagonal
-        self.n_landmarks = n_landmarks
         self.group_corr = group_corr
 
     @property
