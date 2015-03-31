@@ -1005,7 +1005,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         dense_shape_model = super(DeformationFieldBuilder, self). \
             _build_shape_model(dense_shapes, max_components)
 
-        self.n_landmarks =n_landmarks
+        self.n_landmarks = n_landmarks
 
         # group correlation
         if self._is_mc:
