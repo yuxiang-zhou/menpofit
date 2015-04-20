@@ -18,6 +18,7 @@ from menpo.transform.icp import nicp
 from menpo.shape import TriMesh
 from scipy.spatial import KDTree
 from scipy.spatial.distance import euclidean as dist
+from skimage import feature, filters
 
 import os
 import sys
@@ -185,9 +186,9 @@ class NICP(ICP):
     def _align(self, tplt, eps, max_iter):
 
         # Configuration
-        higher = 101
+        higher = 2001
         lower = 1
-        step = 5
+        step = 100
         transforms = []
         iters = []
 
@@ -230,7 +231,7 @@ class NICP(ICP):
 
         # start nicp
         # for each stiffness
-        sf = range(higher, lower, -step)
+        sf = np.logspace(lower, higher, num=step, base=1.005)[-1::-1]
         sf_kron = np.kron(M, G)
         errs = []
 
@@ -694,6 +695,8 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         self._is_mc = multi_channel
         self._alpha = alpha
         self._shape_desc = shape_desc
+        if target_shape is None:
+            target_shape = images[self.template].landmarks['PTS'].lms
 
         return super(OpticalFieldBuilder, self).build(
             images, group, label, verbose, target_shape
@@ -830,6 +833,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 tplt_edge = np.concatenate(edge_g)
 
                 # Store SVS Image
+                store_image = None
                 if self._shape_desc == 'SVS':
                     svs = SVS(
                         points, tplt_edge=tplt_edge, tolerance=3, nu=0.8,
@@ -838,10 +842,22 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     store_image = svs.svs_image(range(xr), range(yr))
                 elif self._shape_desc == 'draw':
                     store_image = sample_points(points, xr, yr, edge_ig)
-                else:
+                elif self._shape_desc == 'draw_gaussian':
+                    ni = sample_points(points, xr, yr, edge_ig)
+                    store_image = Image.init_blank(ni.shape)
+                    store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
+                elif self._shape_desc == 'sample_gaussian':
+                    ni = Image.init_blank((xr, yr))
+                    for pts in points:
+                        ni.pixels[0, pts[0], pts[1]] = 1
+                    store_image = Image.init_blank(ni.shape)
+                    store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
+                elif self._shape_desc == 'sample':
                     store_image = Image.init_blank((xr, yr))
                     for pts in points:
                         store_image.pixels[0, pts[0], pts[1]] = 1
+                else:
+                    raise Exception('Undefined Shape Descriptor: {}'.format(self._shape_desc))
 
                 mio.export_image(
                     store_image,
@@ -866,10 +882,22 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                         store_image = svs.svs_image(range(xr), range(yr))
                     elif self._shape_desc == 'draw':
                         store_image = sample_points(points[g], xr, yr)
-                    else:
+                    elif self._shape_desc == 'draw_gaussian':
+                        ni = sample_points(points[g], xr, yr, edge_ig)
+                        store_image = Image.init_blank(ni.shape)
+                        store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
+                    elif self._shape_desc == 'sample_gaussian':
+                        ni = Image.init_blank((xr, yr))
+                        for pts in points[g]:
+                            ni.pixels[0, pts[0], pts[1]] = 1
+                        store_image = Image.init_blank(ni.shape)
+                        store_image.pixels[0,:,:] = filters.gaussian_filter(np.squeeze(ni.pixels), 1)
+                    elif self._shape_desc == 'sample':
                         store_image = Image.init_blank((xr, yr))
                         for pts in points[g]:
                             store_image.pixels[0, pts[0], pts[1]] = 1
+                    else:
+                        raise Exception('Undefined Shape Descriptor: {}'.format(self._shape_desc))
 
                     mio.export_image(
                         store_image,

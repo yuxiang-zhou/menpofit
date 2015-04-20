@@ -70,19 +70,16 @@ def compute_line_error(pts1, pts2, gp):
     pts1 = pts1.points if isinstance(pts1, PointCloud) else pts1
     pts2 = pts2.points if isinstance(pts2, PointCloud) else pts2
 
-    pts1 = interpolate(pts1, 0.1)
-    pts2 = interpolate(pts2, 0.1)
-
-    _, l1 = arclen_polyl(pts1)
-    _, l2 = arclen_polyl(pts2)
-
     error = 0
+    length = 0
     for g in gp:
         gl1 = pts1[g, :]
         gl2 = pts2[g, :]
+        gl1 = interpolate(gl1, 0.5)
+        gl2 = interpolate(gl2, 0.5)
         _, tl1 = arclen_polyl(gl1)
         _, tl2 = arclen_polyl(gl2)
         d1, d2 = line_diff(gl1, gl2)
-        error += np.sum(np.sqrt([d1*tl1, d2*tl2]))
-
-    return error / (l1 + l2)
+        error += np.sum(np.sqrt([d1*tl1, d2*tl2])) / (tl1 + tl2)
+        length += (tl1 + tl2) / 2
+    return error / length
