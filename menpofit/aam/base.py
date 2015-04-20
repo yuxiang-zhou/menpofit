@@ -1,8 +1,8 @@
 from __future__ import division
 
 import numpy as np
-from menpo.shape import TriMesh
-
+from menpo.shape import TriMesh, PointCloud
+from menpo.transform.piecewiseaffine.base import CythonPWA, PythonPWA
 from menpofit.base import DeformableModel, name_of_callable
 from .builder import build_patch_reference_frame, build_reference_frame
 
@@ -160,11 +160,14 @@ class AAM(DeformableModel):
         reference_frame = self._build_reference_frame(
             shape_instance, landmarks)
 
-        transform = self.transform(
+        cytransform = CythonPWA(
             reference_frame.landmarks['source'].lms, landmarks)
 
-        return appearance_instance.warp_to_mask(reference_frame.mask,
-                                                transform, warp_landmarks=True)
+        im = appearance_instance.as_unmasked().warp_to_mask(reference_frame.mask,
+                                                            cytransform)
+        im.landmarks['source'] = reference_frame.landmarks['source']
+        im.landmarks['source'] = PointCloud(reference_frame.landmarks['source'].lms.points[:self.n_landmarks])
+        return im
 
     def _build_reference_frame(self, reference_shape, landmarks):
         if type(landmarks) == TriMesh:

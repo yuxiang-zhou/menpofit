@@ -1,7 +1,9 @@
 from __future__ import division
 from itertools import chain
+import numpy as np
 
 from menpo.shape import PointCloud
+from menpo.transform.piecewiseaffine.base import CythonPWA
 
 from menpofit.base import name_of_callable
 from menpofit.fitter import MultilevelFitter
@@ -498,6 +500,50 @@ class AAMMultilevelFittingResult(AMMultilevelFittingResult):
             shape, self._gt_shape, self.aam.group_corr
         )
 
+    def rc_errors(self, error_type='me_norm'):
+
+        rcs = self.aam_reconstructions
+        fi = self.fitted_image
+        fss = self.shapes
+
+        errors = []
+        for rc, fs in zip(rcs, fss):
+            errors.append(reconstruction_error(
+                rc, fi, fs, self.aam.features
+            ))
+
+        return errors
+
+    def final_rc_error(self, error_type='me_norm'):
+
+        return reconstruction_error(
+            self.aam_reconstructions[-1],
+            self.fitted_image, self.final_shape, self.aam.features
+        )
+
+    def initial_rc_error(self, error_type='me_norm'):
+
+        return reconstruction_error(
+            self.aam_reconstructions[0],
+            self.fitted_image, self.initial_shape, self.aam.features
+        )
+
     @property
     def aam(self):
         return self.fitter.aam
+
+
+def reconstruction_error(rc, fi, fs, features):
+
+    transform = CythonPWA(rc.landmarks['source'].lms, fs)
+    gt = features(fi).warp_to_mask(rc.mask, transform, warp_landmarks=False)
+    diff = (gt.pixels - rc.pixels) ** 2
+    n_channel = gt.pixels.shape[0]
+    pixels = gt.pixels.reshape(n_channel, -1).T
+    normalizer = np.mean(np.max(pixels, axis=0) -
+                         np.min(pixels, axis=0))
+
+    if normalizer == 0:
+        raise Exception('normalizer is zero')
+
+    return np.mean(np.sqrt(np.sum(diff, axis=0))) / normalizer

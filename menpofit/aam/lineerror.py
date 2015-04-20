@@ -4,6 +4,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from menpo.shape import PointCloud
 
+
 def arclen_polyl(cnt):
 
     tang = np.diff(cnt, axis=0)
@@ -14,7 +15,7 @@ def arclen_polyl(cnt):
     return alparam, cntLen
 
 
-def interpolate(points, step, kind='cubic'):
+def interpolate(points, step, kind='slinear'):
     alparam, cntLen = arclen_polyl(points)
     
     #[_,index_x]=np.unique(points[:, 0], return_index=True)
@@ -68,6 +69,9 @@ def line_diff(l1, l2):
 def compute_line_error(pts1, pts2, gp):
     pts1 = pts1.points if isinstance(pts1, PointCloud) else pts1
     pts2 = pts2.points if isinstance(pts2, PointCloud) else pts2
+
+    pts1 = interpolate(pts1, 0.1)
+    pts2 = interpolate(pts2, 0.1)
 
     _, l1 = arclen_polyl(pts1)
     _, l2 = arclen_polyl(pts2)

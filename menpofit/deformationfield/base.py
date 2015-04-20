@@ -1,7 +1,8 @@
 from menpofit.aam import AAM
 from menpo.shape import PointCloud
 from menpofit.aam.builder import build_reference_frame
-from menpofit.transform import DifferentiablePiecewiseAffine as pwa
+from menpo.transform.piecewiseaffine.base import CythonPWA as pwa
+from menpo.transform.piecewiseaffine import PiecewiseAffine
 
 import numpy as np
 
@@ -62,27 +63,40 @@ class DeformationField(AAM):
     #
     #     return appearance_instance
 
-    def _instance(self, level, shape_instance, appearance_instance):
-        template = self.appearance_models[level].mean()
-        landmarks = PointCloud(
-            template.landmarks['source'].lms.points[:self.n_landmarks]
-        )
+    # def _instance(self, level, shape_instance, appearance_instance):
+    #     template = self.appearance_models[level].mean()
+    #     landmarks = template.landmarks['source'].lms
+    #
+    #     reference_frame = self._build_reference_frame(
+    #         shape_instance)
+    #
+    #     transform = pwa(
+    #         reference_frame.landmarks['source'].lms, landmarks)
+    #
+    #     return appearance_instance.warp_to_mask(reference_frame.mask,
+    #                                             transform, warp_landmarks=True)
 
-        appearance_instance.landmarks['source'] = landmarks
+    # def _instance(self, level, shape_instance, appearance_instance):
+    #     template = self.appearance_models[level].mean()
+    #     landmarks = PointCloud(
+    #         template.landmarks['source'].lms.points[:self.n_landmarks]
+    #     )
+    #
+    #     appearance_instance.landmarks['source'] = landmarks
+    #
+    #     reference_frame = self._build_reference_frame(
+    #         PointCloud(shape_instance.points[:self.n_landmarks])
+    #     )
+    #
+    #     transform = PiecewiseAffine(
+    #         reference_frame.landmarks['source'].lms,
+    #         landmarks
+    #     )
+    #
+    #     return appearance_instance.warp_to_mask(reference_frame.mask,
+    #                                             transform, warp_landmarks=True)
 
-        reference_frame = self._build_reference_frame(
-            PointCloud(shape_instance.points[:self.n_landmarks])
-        )
-
-        transform = pwa(
-            reference_frame.landmarks['source'].lms,
-            landmarks
-        )
-
-        return appearance_instance.warp_to_mask(reference_frame.mask,
-                                                transform, warp_landmarks=True)
-
-    def _build_reference_frame(self, reference_shape):
+    def _build_reference_frame(self, reference_shape, landmarks=None):
 
         return build_reference_frame(
             reference_shape, trilist=None, boundary=10)

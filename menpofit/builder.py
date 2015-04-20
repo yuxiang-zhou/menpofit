@@ -1,15 +1,16 @@
 from __future__ import division
 import abc
 import numpy as np
-from menpo.shape import mean_pointcloud
+from menpo.shape import mean_pointcloud, TriMesh, PointCloud
 from menpo.transform import Scale, Translation, GeneralizedProcrustesAnalysis
+from menpo.transform.icp import nicp
 from menpo.model.pca import PCAModel
 from menpo.visualize import print_dynamic, progress_bar_str
 
 from .base import is_pyramid_on_features
 
 
-def compute_reference_shape(shapes, normalization_diagonal, verbose=False):
+def compute_reference_shape(shapes, normalization_diagonal, target_shape=None, verbose=False):
     r"""
     Function that computes the reference shape as the mean shape of the provided
     shapes.
@@ -36,7 +37,8 @@ def compute_reference_shape(shapes, normalization_diagonal, verbose=False):
     # the reference_shape is the mean shape of the images' landmarks
     if verbose:
         print_dynamic('- Computing reference shape')
-    reference_shape = mean_pointcloud(shapes)
+
+    reference_shape = target_shape if target_shape else mean_pointcloud(shapes)
 
     # fix the reference_shape's diagonal length if asked
     if normalization_diagonal:
@@ -48,7 +50,7 @@ def compute_reference_shape(shapes, normalization_diagonal, verbose=False):
 
 
 def normalization_wrt_reference_shape(images, group, label,
-                                      normalization_diagonal, verbose=False):
+                                      normalization_diagonal, target_shape=None, verbose=False):
     r"""
     Function that normalizes the images sizes with respect to the reference
     shape (mean shape) scaling. This step is essential before building a
@@ -101,7 +103,7 @@ def normalization_wrt_reference_shape(images, group, label,
 
     # compute the reference shape and fix its diagonal length
     reference_shape = compute_reference_shape(shapes, normalization_diagonal,
-                                              verbose=verbose)
+                                              target_shape, verbose=verbose)
 
     # normalize the scaling of all images wrt the reference_shape size
     normalized_images = []
@@ -110,8 +112,13 @@ def normalization_wrt_reference_shape(images, group, label,
             print_dynamic('- Normalizing images size: {}'.format(
                 progress_bar_str((c + 1.) / len(images),
                                  show_bar=False)))
-        normalized_images.append(i.rescale_to_reference_shape(
-            reference_shape, group=group, label=label))
+        if shapes[c].n_points == reference_shape.n_points:
+            normalized_images.append(i.rescale_to_reference_shape(
+                reference_shape, group=group, label=label))
+        else:
+            _, corr = nicp(TriMesh(shapes[c].points), reference_shape)
+            normalized_images.append(i.rescale_to_reference_shape(
+                PointCloud(reference_shape.points[corr]), group=group, label=label))
 
     if verbose:
         print_dynamic('- Normalizing images size: Done\n')

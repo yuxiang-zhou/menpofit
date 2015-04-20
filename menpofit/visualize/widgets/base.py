@@ -2226,8 +2226,8 @@ def plot_ced(errors, figure_size=(10, 8), error_type='me_norm',
 
     # get horizontal axis errors
     x_label_initial_value = 'Error'
-    x_axis_limit_initial_value = 0
-    x_axis_step_initial_value = 0
+    x_axis_limit_initial_value = 0.05
+    x_axis_step_initial_value = 0.005
     if error_range is None:
         if error_type == 'me_norm':
             error_range = [0., 0.101, 0.005]
@@ -2240,7 +2240,7 @@ def plot_ced(errors, figure_size=(10, 8), error_type='me_norm',
             x_axis_step_initial_value = 0.5
             x_label_initial_value = 'Point-to-Point Error'
     else:
-        x_axis_limit_initial_value = (error_range[1] + error_range[0]) / 2
+        x_axis_limit_initial_value = (error_range[1] + error_range[0]) / 2.0
 
     # initial options dictionaries
     figure_options = {'x_scale': 1.,

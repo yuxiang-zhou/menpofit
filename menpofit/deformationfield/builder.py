@@ -1,4 +1,5 @@
 from menpofit.aam import AAMBuilder
+from menpofit.aam.lineerror import interpolate
 from menpofit.base import create_pyramid
 from menpofit.transform import DifferentiableThinPlateSplines
 from menpo.transform.base import Transform
@@ -6,17 +7,21 @@ from menpofit.deformationfield import SVS
 from menpofit.builder import normalization_wrt_reference_shape
 from menpofit.deformationfield.MatlabExecuter import MatlabExecuter
 from menpo.feature import igo
+from menpo.image import MaskedImage, Image
 from menpo.shape import PointCloud
 from menpo.transform.groupalign.base import MultipleAlignment
 from menpo.math import pca
 from menpo.model import PCAModel
 from menpo.visualize import print_dynamic, progress_bar_str
 from menpo.transform import Translation, AlignmentSimilarity
+from menpo.transform.icp import nicp
 from menpo.shape import TriMesh
 from scipy.spatial import KDTree
+from scipy.spatial.distance import euclidean as dist
 
 import os
 import sys
+import uuid
 import subprocess
 import numpy as np
 import menpo.io as mio
@@ -342,7 +347,7 @@ class DeformationFieldBuilder(AAMBuilder):
         # compute reference_shape and normalize images size
         self.reference_shape, normalized_images = \
             normalization_wrt_reference_shape(
-                images, group, label, self.normalization_diagonal, verbose
+                images, group, label, self.normalization_diagonal, target_shape, verbose
             )
 
         # create pyramid
@@ -576,8 +581,8 @@ class DeformationFieldBuilder(AAMBuilder):
             g_align_s = []
             for aligned_s in icp.aligned_shapes:
                 g_align_s.append(PointCloud(aligned_s.points[g]))
-            gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
-            g_align = np.array(gnicp.point_correspondence) + g[0]
+            _, point_correspondence = FastNICP(g_align_s, PointCloud(icp.target.points[g]))
+            g_align = np.array(point_correspondence) + g[0]
             if align_gcorr is None:
                 align_gcorr = g_align
             else:
@@ -671,6 +676,8 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         self._svs_path = None
         self._flow_path = None
         self._is_mc = True
+        self._alpha = 15
+        self._shape_desc = 'SVS'
         super(OpticalFieldBuilder, self).__init__(
             features, transform,
             trilist, normalization_diagonal, n_levels,
@@ -680,11 +687,13 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         )
 
     def build(self, images, group=None, label=None, verbose=False,
-              target_shape=None, svs_path=None, flow_path=None, multi_channel=True):
+              target_shape=None, svs_path=None, flow_path=None, multi_channel=True, alpha=15, shape_desc='SVS'):
 
         self._svs_path = svs_path
         self._flow_path = flow_path
         self._is_mc = multi_channel
+        self._alpha = alpha
+        self._shape_desc = shape_desc
 
         return super(OpticalFieldBuilder, self).build(
             images, group, label, verbose, target_shape
@@ -693,7 +702,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
     def _build_shape_model(self, shapes, max_components, target_shape):
 
         # Parameters
-        alpha = 15
+        alpha = self._alpha
         pdm = 0
 
         # Simulate inconsist annotation
@@ -735,7 +744,6 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 DeformationFieldBuilder, self
             )._build_reference_frame(bound_list)
         else:
-            from menpo.image import MaskedImage
             svs_img = mio.import_image(
                 '{}/{}'.format(self._svs_path, 'svs_0000.png')
             )
@@ -772,21 +780,16 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
 
         # Create Cache Directory
         home_dir = os.getcwd()
-        p = subprocess.Popen(
-            ['rm -r {}/.cache'.format(home_dir)],
-            stdout=subprocess.PIPE,
-            shell=True
-        )
-        p.wait()
-        svs_path_in = '{}/.cache/svs_training'.format(home_dir)
-        svs_path_out = '{}/.cache/svs_result'.format(home_dir)
+        dir_hex = uuid.uuid1()
+        svs_path_in = '{}/.cache/{}/svs_training'.format(home_dir, dir_hex)
+        svs_path_out = '{}/.cache/{}/svs_result'.format(home_dir, dir_hex)
         matE = MatlabExecuter()
         mat_code_path = '/vol/atlas/homes/yz4009/gitdev/mfsfdev'
-        if not os.path.exists(svs_path_in):
-            os.makedirs(svs_path_in)
-
+        
         # Skip building svs is path specified
         if self._svs_path is None:
+            if not os.path.exists(svs_path_in):
+                os.makedirs(svs_path_in)
             # Build Transform Using SVS
             svs_list = []
             xr, yr = self.reference_frame.shape
@@ -802,13 +805,15 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 lindex = 0
                 # Get Grouped Landmark Indexes
                 if j > 0:
-                    g_i = self._feature_images[0][j-1].landmarks['groups']
+                    g_i = self._feature_images[0][j-1].landmarks['groups'].items()
                 else:
-                    g_i = self._feature_images[0][j].landmarks['groups']
+                    g_i = self._feature_images[0][j].landmarks['groups'].items()
+                    if not g_i[0][1].n_points == a_s.n_points:
+                        g_i = [['Reference', a_s]]
 
                 edge_g = []
                 edge_ig = []
-                for g in g_i.items():
+                for g in g_i:
                     g_size = g[1].n_points
                     rindex = g_size+lindex
                     edges_range = np.array(range(lindex, rindex))
@@ -823,15 +828,23 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     lindex = rindex
 
                 tplt_edge = np.concatenate(edge_g)
-                # Train svs
-                svs = SVS(
-                    points, tplt_edge=tplt_edge, tolerance=3, nu=0.8,
-                    gamma=0.8, max_f=20
-                )
-                svs_list.append(svs)
+
                 # Store SVS Image
+                if self._shape_desc == 'SVS':
+                    svs = SVS(
+                        points, tplt_edge=tplt_edge, tolerance=3, nu=0.8,
+                        gamma=0.8, max_f=20
+                    )
+                    store_image = svs.svs_image(range(xr), range(yr))
+                elif self._shape_desc == 'draw':
+                    store_image = sample_points(points, xr, yr, edge_ig)
+                else:
+                    store_image = Image.init_blank((xr, yr))
+                    for pts in points:
+                        store_image.pixels[0, pts[0], pts[1]] = 1
+
                 mio.export_image(
-                    svs.svs_image(xr=range(xr), yr=range(yr)),
+                    store_image,
                     '{}/svs_{:04d}.png'.format(svs_path_in, j),
                     overwrite=True
                 )
@@ -843,15 +856,24 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     edges = np.hstack((
                         edges_range[:g_size-1, None], edges_range[1:, None]
                     ))
-                    svs = SVS(
-                        points[g], tplt_edge=edges, tolerance=3, nu=0.8,
-                        gamma=0.8, max_f=20
-                    )
-                    svs_list.append(svs)
+
                     # Store SVS Image
+                    if self._shape_desc == 'SVS':
+                        svs = SVS(
+                            points[g], tplt_edge=edges, tolerance=3, nu=0.8,
+                            gamma=0.8, max_f=20
+                        )
+                        store_image = svs.svs_image(range(xr), range(yr))
+                    elif self._shape_desc == 'draw':
+                        store_image = sample_points(points[g], xr, yr)
+                    else:
+                        store_image = Image.init_blank((xr, yr))
+                        for pts in points[g]:
+                            store_image.pixels[0, pts[0], pts[1]] = 1
+
                     mio.export_image(
-                        svs.svs_image(xr=range(xr), yr=range(yr)),
-                        '{}/svs_{:04d}_g{}.png'.format(svs_path_in, j, ii),
+                        store_image,
+                        '{}/svs_{:04d}.png'.format(svs_path_in, j),
                         overwrite=True
                     )
 
@@ -864,11 +886,12 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     '{0}/svs_{1:04d}.gif'.format(svs_path_in, j)])
         else:
             svs_path_in = self._svs_path
-            svs_path_out = '{}/{}'.format(home_dir, svs_path_in)
+            svs_path_out = '{}'.format(svs_path_in)
 
         print_dynamic('  - Building Trajectory Basis')
         nFrame = len(icp.aligned_shapes)
-        if self._svs_path is None:
+        mio.export_pickle(icp.aligned_shapes, '/homes/yz4009/wd/PickleModel/aligned_shapes.pkl', overwrite=True)
+        if self._flow_path is None:
             # Build basis
             # group correspondence
             align_gcorr = None
@@ -880,6 +903,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     g_align_s = []
                     for aligned_s in icp.aligned_shapes:
                         g_align_s.append(PointCloud(aligned_s.points[g]))
+                    # _, point_correspondence = FastNICP(g_align_s, PointCloud(icp.target.points[g]))
                     gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
                     g_align = np.array(gnicp.point_correspondence) + g[0]
                     if align_gcorr is None:
@@ -887,8 +911,10 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     else:
                         align_gcorr = np.hstack((align_gcorr, g_align))
             else:
-                nicp = NICP(icp.aligned_shapes, icp.target)
-                align_gcorr = nicp.point_correspondence
+                print 'single channel basis'
+                _, point_correspondence = FastNICP(icp.aligned_shapes, icp.target)
+                # gnicp = NICP(icp.aligned_shapes, icp.target)
+                align_gcorr = point_correspondence
 
             # compute non-linear transforms (tps)
             for a_s, a_corr in zip(aligned_shapes, align_gcorr):
@@ -924,10 +950,10 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
 
             S = W.dot(W.T)
             U, var, _ = np.linalg.svd(S)
-            csum = np.cumsum(var)
-            csum = 100 * csum / csum[-1]
-            accept_rate = 99.9
-            # rank = np.argmin(np.abs(csum - accept_rate))
+            # csum = np.cumsum(var)
+            # csum = 100 * csum / csum[-1]
+            # accept_rate = 99.9
+            # # rank = np.argmin(np.abs(csum - accept_rate))
             Q = U[:, :]
             basis = np.vstack((Q[1::2, :], Q[0::2, :]))
 
@@ -1023,3 +1049,46 @@ def build_reference_frame(mean_shape):
     from menpofit.aam.base import build_reference_frame as brf
 
     return brf(reference_shape)
+
+
+def minimum_distance(v, w, p, tolerance=1.0):
+#     Return minimum distance between line segment (v,w) and point p
+    l2 = dist(v, w)  # i.e. |w-v|^2 -  avoid a sqrt
+    if l2 == 0.0:
+        return dist(p, v)
+
+#     Consider the line extending the segment, parameterized as v + t (w - v).
+#     We find projection of point p onto the line.
+#     It falls where t = [(p-v) . (w-v)] / |w-v|^2
+    t = np.dot((p - v) / l2, (w - v) / l2)
+    if t < 0.0:
+        return dist(p, v) + tolerance      # // Beyond the 'v' end of the segment
+    elif t > 1.0:
+        return dist(p, w) + tolerance  # // Beyond the 'w' end of the segment
+
+    projection = v + t * (w - v)  # // Projection falls on the segment
+    return dist(p, projection)
+
+
+def sample_points(target, range_x, range_y, edge=None):
+    ret_img = Image.init_blank((range_x, range_y))
+
+    if edge is None:
+        edge = [range(len(target))]
+
+    for eg in edge:
+        for pts in interpolate(target[eg], 0.1):
+            ret_img.pixels[0, pts[0], pts[1]] = 1
+
+    return ret_img
+
+
+def FastNICP(sources, target):
+    aligned = []
+    corrs = []
+    for source in sources:
+        mesh = TriMesh(source.points)
+        a_s, corr = nicp(mesh, target, us=2001, ls=1, step=100)
+        aligned.append(a_s)
+        corrs.append(corr)
+    return aligned, corrs

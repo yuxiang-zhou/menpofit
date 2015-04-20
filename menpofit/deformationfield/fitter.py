@@ -393,7 +393,6 @@ class LucasKanadeDeformationFieldAAMFitter(LucasKanadeAAMFitter):
     def fitters(self):
         return self._fitters
 
-
     @property
     def _str_title(self):
         r"""
