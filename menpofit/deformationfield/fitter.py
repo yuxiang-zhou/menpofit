@@ -76,7 +76,7 @@ class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):
                 g_align_s = []
                 for aligned_s in icp.aligned_shapes:
                     g_align_s.append(PointCloud(aligned_s.points[g]))
-                gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
+                gnicp = NICP(g_align_s, icp.target)
                 g_align = np.array(gnicp.point_correspondence) + g[0]
                 if align_gcorr is None:
                     align_gcorr = g_align
