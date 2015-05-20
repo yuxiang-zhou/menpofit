@@ -7,7 +7,7 @@ from menpofit.deformationfield import SVS
 from menpofit.builder import normalization_wrt_reference_shape
 from menpofit.deformationfield.MatlabExecuter import MatlabExecuter
 from menpo.feature import igo
-from menpo.image import MaskedImage, Image
+from menpo.image import Image
 from menpo.shape import PointCloud
 from menpo.transform.groupalign.base import MultipleAlignment
 from menpo.math import pca
@@ -18,7 +18,8 @@ from menpo.transform.icp import nicp
 from menpo.shape import TriMesh
 from scipy.spatial import KDTree
 from scipy.spatial.distance import euclidean as dist
-from skimage import feature, filters
+from skimage import filters
+from os.path import  isfile
 
 import os
 import sys
@@ -517,7 +518,7 @@ class DeformationFieldBuilder(AAMBuilder):
         # Align Shapes Using ICP
         if target_shape is None:
             target_shape = shapes[self.template]
-             
+
         sample_shapes = shapes
         self._icp = icp = ICP(sample_shapes, target_shape)
         aligned_shapes = icp.aligned_shapes
@@ -628,20 +629,6 @@ class DeformationFieldBuilder(AAMBuilder):
         if verbose:
             print_dynamic('{}Computing transforms'.format(level_str))
 
-        # transforms = []
-        # for a_s, s, i in zip(self._aligned_shapes, self._shapes,
-        #                      feature_images):
-        #     image_center = i.landmarks[group][label].centre_of_bounds()
-        #     # Align shapes with images
-        #     temp_as = Translation(
-        #         image_center-a_s.centre_of_bounds()
-        #     ).apply(a_s)
-        #
-        #     temp_s = Translation(
-        #         image_center-s.centre_of_bounds()
-        #     ).apply(s)
-        #
-        #     transforms.append(self.transform(temp_as, temp_s))
         transforms = []
         for t, rt in zip(self.transforms, self._removed_transform):
             ct = t.compose_before(self._rf_align).compose_before(rt)
@@ -709,7 +696,7 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         # Parameters
         alpha = self._alpha
         pdm = 0
-
+        n_shapes = len(shapes)
         # Simulate inconsist annotation
         sample_groups = []
         g_i = self._feature_images[0][self.template].landmarks[
@@ -788,7 +775,6 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
             if not os.path.exists(svs_path_in):
                 os.makedirs(svs_path_in)
             # Build Transform Using SVS
-            svs_list = []
             xr, yr = self.reference_frame.shape
             for j, a_s in enumerate([target_shape] + aligned_shapes.tolist()):
                 print_dynamic("  - SVS Training {} out of {}".format(
@@ -827,7 +813,6 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 tplt_edge = np.concatenate(edge_g)
 
                 # Store SVS Image
-                store_image = None
                 if self._shape_desc == 'SVS':
                     svs = SVS(
                         points, tplt_edge=tplt_edge, tolerance=3, nu=0.8,
@@ -909,11 +894,19 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         else:
             svs_path_in = self._svs_path
             svs_path_out = '{}'.format(svs_path_in)
+            seg_mask_points = mio.import_pickle(
+                svs_path_in+'/seg_mask_points_group.pkl'
+            )
             # compute and normalize mask images size
             # single channel ---------------------------------------------
             mask_images = []
-            for mi in mio.import_images(svs_path_in + '/*_mask.png'):
-                mi.landmarks['PTS'] = mio.import_landmark_file(svs_path_in + '/{}.pts'.format(mi.path.stem[:4]))
+            for mii in range(n_shapes):
+                mi = mio.import_image(
+                    '{}/{:04d}_mask.png'.format(svs_path_in, mii + 1)
+                )
+                mi.landmarks['PTS'] = mio.import_landmark_file(
+                    svs_path_in + '/{:04d}.pts'.format(mii+1)
+                )
                 if mi.n_channels == 3:
                         mi = mi.as_greyscale()
                 mask_images.append(mi)
@@ -923,7 +916,8 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
 
             _, normalized_mask_images = \
                 normalization_wrt_reference_shape(
-                    mask_images, 'PTS', None, self.normalization_diagonal, target_shape, True
+                    mask_images, 'PTS', None,
+                    self.normalization_diagonal, target_shape, False
                 )
 
             for index, mi in enumerate(normalized_mask_images[:len(shapes)]):
@@ -938,33 +932,46 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                 if nmi.n_channels == 3:
                     nmi = nmi.as_greyscale()
 
-                mio.export_image(nmi, svs_path_in + '/svs_{:04d}.png'.format(index+1), overwrite=True)
+                mio.export_image(
+                    nmi, '{}/svs_{:04d}.png'.format(svs_path_in, index+1),
+                    overwrite=True
+                )
                 mio.export_landmark_file(
-                    nmi.landmarks['PTS'], svs_path_in + '/svs_{:04d}.pts'.format(index+1), overwrite=True
+                    nmi.landmarks['PTS'],
+                    svs_path_in + '/svs_{:04d}.pts'.format(index+1),
+                    overwrite=True
                 )
             # end single channel ---------------------------------------------
 
             # normalise multichannel images
-            # multichannel -----------------------------------------------------------
-            for iindex, msi in enumerate(mio.import_pickle(svs_path_in+'/seg_mask_points.pkl')): #{[mask, Z]}:
+            # multichannel -----------------------------------------------------
+
+            for iindex in range(n_shapes): #{[mask, Z]}:
+                msi = seg_mask_points[iindex]
                 # for every image
                 mask_seg_images = []
                 for iseg in range(nlms):
                     seg_img = Image.init_blank(nshape)
-                    seg_img.landmarks['PTS'] = mio.import_landmark_file(svs_path_in + '/{:04d}.pts'.format(iindex+1))
+                    seg_img.landmarks['PTS'] = mio.import_landmark_file(
+                        svs_path_in + '/{:04d}.pts'.format(iindex+1)
+                    )
                     for pt in msi[0][np.where(msi[1] == iseg)]:
-                        seg_img.pixels[0, pt[0], pt[1]] = 1
+                        try:
+                            seg_img.pixels[0, pt[0], pt[1]] = 1
+                        except IndexError:
+                            print 'Index Error'
                     mask_seg_images.append(seg_img)
 
-                _, normalized_mask_images = \
+                _, normalized_seg_images = \
                     normalization_wrt_reference_shape(
-                        mask_seg_images, 'PTS', None, self.normalization_diagonal, target_shape, True
+                        mask_seg_images, 'PTS', None,
+                        self.normalization_diagonal, target_shape, False
                     )
 
-                for index, mi in enumerate(normalized_mask_images[:len(shapes)]):
+                for index, mi in enumerate(normalized_seg_images[:len(shapes)]):
 
                     nmi = mi.warp_to_shape(
-                        mi.shape, self._removed_transform[index],
+                        mi.shape, self._removed_transform[iindex],
                         warp_landmarks=True
                     ).warp_to_shape(
                         self.reference_frame.shape, self._rf_align,
@@ -974,19 +981,28 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     if nmi.n_channels == 3:
                         nmi = nmi.as_greyscale()
 
-                    mio.export_image(nmi, svs_path_in + '/svs_{:04d}_{:02d}.png'.format(iindex+1,index), overwrite=True)
-                    subprocess.Popen([
-                        'convert',
-                        '-delay', '10', '-loop', '0',
-                        '{}/svs_{:04d}_g*.png'.format(svs_path_in, iindex+1),
-                        '{}/svs_{:04d}.gif'.format(svs_path_in, iindex+1)])
-            # end multi channel --------------------------------------------------------
+                    # print(iindex,index, nmi.shape, self.reference_frame.shape)
 
+                    mio.export_image(
+                        nmi, svs_path_in + '/svs_{:04d}_g{:02d}.png'.format(
+                            iindex+1, index
+                        ), overwrite=True
+                    )
 
+                subprocess.Popen([
+                    'convert',
+                    '-delay', '10', '-loop', '0',
+                    '{}/svs_{:04d}_g*.png'.format(svs_path_in, iindex+1),
+                    '{}/svs_{:04d}.gif'.format(svs_path_in, iindex+1)])
+
+                print_dynamic(' - Generating Multi-Channel Images: {}/{}'.format(
+                    iindex+1, n_shapes
+                ))
+            # end multi channel ------------------------------------------------
 
         print_dynamic('  - Building Trajectory Basis')
         nFrame = len(icp.aligned_shapes)
-        # mio.export_pickle(icp.aligned_shapes, '/homes/yz4009/wd/PickleModel/aligned_shapes.pkl', overwrite=True)
+
         if self._flow_path is None and False:
             # Build basis
             # group correspondence
@@ -999,7 +1015,9 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
                     g_align_s = []
                     for aligned_s in icp.aligned_shapes:
                         g_align_s.append(PointCloud(aligned_s.points[g]))
-                    # _, point_correspondence = FastNICP(g_align_s, PointCloud(icp.target.points[g]))
+                    # _, point_correspondence = FastNICP(
+                    #   g_align_s, PointCloud(icp.target.points[g])
+                    # )
                     gnicp = NICP(g_align_s, PointCloud(icp.target.points[g]))
                     g_align = np.array(gnicp.point_correspondence) + g[0]
                     if align_gcorr is None:

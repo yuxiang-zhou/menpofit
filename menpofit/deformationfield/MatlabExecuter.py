@@ -24,4 +24,4 @@ class MatlabExecuter(object):
         self._dir = path if path[0] == '/' else self._dir + path
 
     def addpath(self, path):
-	self.run_function('addpath(\'{}\')'.format(path))
+        self.run_function('addpath(\'{}\')'.format(path))
