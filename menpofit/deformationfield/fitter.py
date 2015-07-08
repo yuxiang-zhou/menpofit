@@ -1,5 +1,6 @@
 from menpo.transform.base import Transform, VInvertible, VComposable
 from menpo.transform import Translation, AlignmentSimilarity
+from menpo.transform.icp import SICP as ICP, SNICP as NICP
 from menpo.shape import PointCloud
 import numpy as np
 from scipy.spatial import KDTree
@@ -13,7 +14,6 @@ from menpofit.fittingresult import ParametricFittingResult
 from menpofit.base import create_pyramid
 from menpofit.builder import normalization_wrt_reference_shape
 from menpofit.fittingresult import compute_error
-from .builder import ICP, NICP
 
 
 class LinearWarp(OrthoPDM, Transform, VInvertible, VComposable):

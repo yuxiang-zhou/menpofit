@@ -3,7 +3,7 @@ import abc
 import numpy as np
 from menpo.shape import mean_pointcloud, TriMesh, PointCloud
 from menpo.transform import Scale, Translation, GeneralizedProcrustesAnalysis
-from menpo.transform.icp import nicp
+from menpo.transform.icp import nicp, icp, SNICP
 from menpo.model.pca import PCAModel
 from menpo.visualize import print_dynamic, progress_bar_str
 
@@ -116,7 +116,14 @@ def normalization_wrt_reference_shape(images, group, label,
             normalized_images.append(i.rescale_to_reference_shape(
                 reference_shape, group=group, label=label))
         else:
-            _, corr = nicp(TriMesh(shapes[c].points), reference_shape)
+            align_s, _ = icp(shapes[c].points, reference_shape.points)
+            try:
+                _, corr = nicp(TriMesh(align_s), reference_shape)
+            except:
+                print 'Failed Fast NICP'
+                nicp_result = SNICP([PointCloud(align_s)], reference_shape)
+                corr = nicp_result.point_correspondence[0]
+
             normalized_images.append(i.rescale_to_reference_shape(
                 PointCloud(reference_shape.points[corr]), group=group, label=label))
 

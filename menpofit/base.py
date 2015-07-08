@@ -1,5 +1,7 @@
 from __future__ import division
 from menpo.transform import AlignmentSimilarity, Similarity
+from menpo.transform.icp import icp
+from menpo.shape import PointCloud
 import numpy as np
 from menpo.visualize import progress_bar_str, print_dynamic
 
@@ -125,7 +127,11 @@ def noisy_align(source, target, noise_std=0.04, rotation=False):
     noisy_transform : :class: `menpo.transform.Similarity`
         The noisy Similarity Transform
     """
-    transform = AlignmentSimilarity(source, target, rotation=rotation)
+    if source.n_points == target.n_points:
+        transform = AlignmentSimilarity(source, target, rotation=rotation)
+    else:
+        aligned_s, _ = icp(source.points, target.points)
+        transform = AlignmentSimilarity(source, PointCloud(aligned_s), rotation=rotation)
     parameters = transform.as_vector()
     parameter_range = np.hstack((parameters[:2], target.range()))
     noise = (parameter_range * noise_std *
