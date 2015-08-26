@@ -377,12 +377,12 @@ class OpticalFieldBuilder(DeformationFieldBuilder):
         # Translation between reference shape and aliened shapes
         align_centre = target_shape.centre_of_bounds()
         align_t = Translation(
-            self.reference_frame.centre - align_centre
+            self.reference_frame.centre() - align_centre
         )
         self._align_t = align_t
 
         self._rf_align = Translation(
-            align_centre - self.reference_frame.centre
+            align_centre - self.reference_frame.centre()
         )
 
         # Set All True Pixels for Mask
